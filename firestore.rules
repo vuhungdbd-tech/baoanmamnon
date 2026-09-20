@@ -1,0 +1,107 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Checking membership of a chat
+    function isChatMember(chatId, userId) {
+      return exists(/databases/$(database)/documents/chats/$(chatId)/members/$(userId));
+    }
+
+    // Validate User Profiles
+    function isValidUser(data) {
+      return data.uid is string &&
+             data.displayName is string && data.displayName.size() <= 100 &&
+             data.email is string && data.email.size() <= 150 &&
+             (data.photoURL == null || data.photoURL is string) &&
+             (data.status == null || data.status in ['online', 'offline']) &&
+             (data.bio == null || data.bio is string);
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.auth.uid == userId && isValidUser(incoming());
+      allow update: if isSignedIn() && request.auth.uid == userId && isValidUser(incoming());
+    }
+
+    // Friendships
+    match /friendships/{friendshipId} {
+      allow read: if isSignedIn() && (existing().user1Id == request.auth.uid || existing().user2Id == request.auth.uid);
+      allow create: if isSignedIn() && 
+                    (incoming().user1Id == request.auth.uid || incoming().user2Id == request.auth.uid) &&
+                    isValidId(friendshipId);
+      allow update: if isSignedIn() && 
+                    (existing().user1Id == request.auth.uid || existing().user2Id == request.auth.uid) &&
+                    incoming().user1Id == existing().user1Id &&
+                    incoming().user2Id == existing().user2Id;
+      allow delete: if isSignedIn() && (existing().user1Id == request.auth.uid || existing().user2Id == request.auth.uid);
+    }
+
+    // Chats
+    match /chats/{chatId} {
+      allow get: if isSignedIn() && isChatMember(chatId, request.auth.uid);
+      allow list: if isSignedIn() && isChatMember(chatId, request.auth.uid);
+      allow create: if isSignedIn() && isValidId(chatId);
+      allow update: if isSignedIn() && isChatMember(chatId, request.auth.uid);
+
+      // Chat Members Inside Chat Room
+      match /members/{memberId} {
+        allow read: if isSignedIn() && (request.auth.uid == memberId || isChatMember(chatId, request.auth.uid));
+        // Allow creating members to build room
+        allow create, update: if isSignedIn();
+        allow delete: if isSignedIn() && (request.auth.uid == memberId || isChatMember(chatId, request.auth.uid));
+      }
+
+      // Chat Messages Inside Chat Room
+      match /messages/{messageId} {
+        allow read, list: if isSignedIn() && isChatMember(chatId, request.auth.uid);
+        allow create: if isSignedIn() && 
+                      isChatMember(chatId, request.auth.uid) &&
+                      incoming().senderId == request.auth.uid &&
+                      isValidId(messageId);
+        allow update, delete: if false; // Messages are immutable for security
+      }
+    }
+
+    // Call Sessions
+    match /calls/{callId} {
+      allow get: if isSignedIn() && (existing().callerId == request.auth.uid || existing().receiverId == request.auth.uid);
+      allow list: if isSignedIn() && (existing().callerId == request.auth.uid || existing().receiverId == request.auth.uid);
+      allow create: if isSignedIn() && (incoming().callerId == request.auth.uid || incoming().receiverId == request.auth.uid) && isValidId(callId);
+      allow update: if isSignedIn() && (existing().callerId == request.auth.uid || existing().receiverId == request.auth.uid);
+      allow delete: if isSignedIn() && (existing().callerId == request.auth.uid || existing().receiverId == request.auth.uid);
+
+      match /candidates/{candidateId} {
+        allow read, list: if isSignedIn() && (
+          get(/databases/$(database)/documents/calls/$(callId)).data.callerId == request.auth.uid ||
+          get(/databases/$(database)/documents/calls/$(callId)).data.receiverId == request.auth.uid
+        );
+        allow create: if isSignedIn() && (
+          get(/databases/$(database)/documents/calls/$(callId)).data.callerId == request.auth.uid ||
+          get(/databases/$(database)/documents/calls/$(callId)).data.receiverId == request.auth.uid
+        ) && isValidId(candidateId);
+      }
+    }
+  }
+}

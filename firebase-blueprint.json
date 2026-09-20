@@ -1,0 +1,132 @@
+{
+  "entities": {
+    "user": {
+      "title": "User Profile",
+      "description": "Thông tin hồ sơ cá nhân của người dùng Zalo Chat",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "UID người dùng từ Firebase Auth" },
+        "displayName": { "type": "string", "description": "Tên hiển thị" },
+        "email": { "type": "string", "format": "email", "description": "Địa chỉ Email" },
+        "photoURL": { "type": "string", "description": "Đường dẫn ảnh đại diện" },
+        "status": { "type": "string", "enum": ["online", "offline"], "description": "Trạng thái trực tuyến" },
+        "bio": { "type": "string", "description": "Lời giới thiệu ngắn" },
+        "lastSeen": { "type": "string", "description": "Thời gian hoạt động cuối cùng" }
+      },
+      "required": ["uid", "displayName", "email"]
+    },
+    "friendship": {
+      "title": "Friendship Record",
+      "description": "Thông tin quan hệ bạn bè giữa hai người dùng",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Mã quan hệ bạn bè (thường ghép từ 2 UID theo thứ tự Alphabet)" },
+        "user1Id": { "type": "string", "description": "UID người dùng thứ nhất" },
+        "user2Id": { "type": "string", "description": "UID người dùng thứ hai" },
+        "status": { "type": "string", "enum": ["pending", "accepted"], "description": "Trạng thái tình bạn" },
+        "createdAt": { "type": "string", "description": "Thời gian kết bạn" }
+      },
+      "required": ["id", "user1Id", "user2Id", "status"]
+    },
+    "chat": {
+      "title": "Chat Room",
+      "description": "Thông tin về phòng chat 1-1 hoặc phòng chat nhóm",
+      "type": "object",
+      "properties": {
+        "chatId": { "type": "string", "description": "ID duy nhất của phòng chat" },
+        "type": { "type": "string", "enum": ["direct", "group"], "description": "Loại phòng chat" },
+        "lastMessageText": { "type": "string", "description": "Nội dung tin nhắn cuối cùng" },
+        "lastMessageTime": { "type": "string", "description": "Thời gian tin nhắn cuối cùng" },
+        "lastSenderId": { "type": "string", "description": "ID người gửi cuối cùng" },
+        "updatedAt": { "type": "string", "description": "Thời gian cập nhật phòng chat" }
+      },
+      "required": ["chatId", "type"]
+    },
+    "chat_member": {
+      "title": "Chat Member",
+      "description": "Thành viên trong phòng chat",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "UID của thành viên" },
+        "joinedAt": { "type": "string", "description": "Thời gian tham gia vào phòng chat" }
+      },
+      "required": ["userId"]
+    },
+    "message": {
+      "title": "Message Item",
+      "description": "Tin nhắn trong phòng chat",
+      "type": "object",
+      "properties": {
+        "messageId": { "type": "string", "description": "ID duy nhất của tin nhắn" },
+        "senderId": { "type": "string", "description": "UID người gửi" },
+        "senderName": { "type": "string", "description": "Tên người gửi" },
+        "text": { "type": "string", "description": "Nội dung văn bản tin nhắn" },
+        "type": { "type": "string", "enum": ["text", "image", "emoji", "call_status"], "description": "Loại tin nhắn" },
+        "fileUrl": { "type": "string", "description": "URL hình ảnh đính kèm (nếu có)" },
+        "isAiAsked": { "type": "boolean", "description": "Đánh dấu tin nhắn được gửi trả lời từ AI" },
+        "timestamp": { "type": "string", "description": "Thời gian gửi" }
+      },
+      "required": ["messageId", "senderId", "senderName", "text", "type", "timestamp"]
+    },
+    "call": {
+      "title": "Call Session",
+      "description": "Phiên gọi thoại hoặc gọi video WebRTC",
+      "type": "object",
+      "properties": {
+        "callId": { "type": "string", "description": "ID cuộc gọi trùng khớp với ID phòng chat hoặc tự tạo" },
+        "callerId": { "type": "string", "description": "UID người gọi" },
+        "callerName": { "type": "string", "description": "Tên người gọi" },
+        "receiverId": { "type": "string", "description": "UID người nhận" },
+        "type": { "type": "string", "enum": ["audio", "video"], "description": "Loại cuộc gọi" },
+        "status": { "type": "string", "enum": ["ringing", "accepted", "rejected", "ended"], "description": "Trạng thái cuộc gọi" },
+        "offer": { "type": "string", "description": "Chuỗi SDP Offer phục vụ kết nối WebRTC" },
+        "answer": { "type": "string", "description": "Chuỗi SDP Answer phục vụ kết nối WebRTC" },
+        "createdAt": { "type": "string", "description": "Thời gian tạo cuộc gọi" }
+      },
+      "required": ["callId", "callerId", "receiverId", "type", "status", "createdAt"]
+    },
+    "call_candidate": {
+      "title": "WebRTC Ice Candidate",
+      "description": "Ứng cử viên mạng Ice Candidate cho kết nối P2P WebRTC",
+      "type": "object",
+      "properties": {
+        "candidate": { "type": "string", "description": "Đoạn JSON mã hóa thông tin ICE Candidate" },
+        "sdpMid": { "type": "string", "description": "SDP Mid" },
+        "sdpMLineIndex": { "type": "integer", "description": "SDP MLine Index" },
+        "sender": { "type": "string", "enum": ["caller", "receiver"], "description": "Bên gửi ứng cử viên" },
+        "createdAt": { "type": "string", "description": "Thời gian thêm candidate" }
+      },
+      "required": ["candidate", "sender", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "user",
+      "description": "Bộ sưu tập người dùng công khai"
+    },
+    "/friendships/{friendshipId}": {
+      "schema": "friendship",
+      "description": "Danh sách quan hệ bạn bè"
+    },
+    "/chats/{chatId}": {
+      "schema": "chat",
+      "description": "Các phòng chat"
+    },
+    "/chats/{chatId}/members/{memberId}": {
+      "schema": "chat_member",
+      "description": "Thành viên của từng phòng chat"
+    },
+    "/chats/{chatId}/messages/{messageId}": {
+      "schema": "message",
+      "description": "Các tin nhắn của phòng chat"
+    },
+    "/calls/{callId}": {
+      "schema": "call",
+      "description": "Phiên ra hiệu (signaling) cho cuộc gọi thoại/video"
+    },
+    "/calls/{callId}/candidates/{candidateId}": {
+      "schema": "call_candidate",
+      "description": "Các ICE candidate trao đổi qua lại giữa Caller và Receiver"
+    }
+  }
+}

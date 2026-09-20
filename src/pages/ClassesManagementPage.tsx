@@ -1,0 +1,1844 @@
+import React, { useState, useMemo } from 'react';
+import { useSchool } from '../contexts/SchoolContext';
+import { useAuth } from '../contexts/AuthContext';
+import { StorageService } from '../services/storage';
+import { ClassItem, Profile, Student, PreschoolGradeConfig } from '../types';
+import {
+  Layers,
+  Plus,
+  Edit2,
+  Trash2,
+  Lock,
+  Unlock,
+  CheckCircle2,
+  AlertCircle,
+  GraduationCap,
+  Save,
+  X,
+  Search,
+  Check,
+  UserPlus,
+  SlidersHorizontal,
+  TableProperties,
+  FileInput,
+  ArrowUpDown,
+  Sparkles,
+  School,
+  Phone,
+  Mail,
+  Users,
+  User,
+  Settings2,
+  Baby,
+  RotateCcw,
+} from 'lucide-react';
+
+export const ClassesManagementPage: React.FC = () => {
+  const {
+    classes,
+    campuses,
+    activeYear,
+    addClass,
+    updateClass,
+    batchUpdateClasses,
+    createTeacherAndAssign,
+    deleteClass,
+    toggleLockClass,
+    students,
+    addStudent,
+    updateStudent,
+    deleteStudent,
+    importStudents,
+    preschoolGrades,
+    updatePreschoolGrades,
+    resetPreschoolGrades,
+    refreshAll,
+  } = useSchool();
+  const { allUsers, currentUser, isAdmin, isBGH, reloadUsers } = useAuth();
+
+  // Filter & Search states
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedGrade, setSelectedGrade] = useState<number | 'ALL'>('ALL');
+
+  React.useEffect(() => {
+    if (selectedGrade !== 'ALL') {
+      const exists = preschoolGrades.some((pg) => pg.grade_num === selectedGrade);
+      if (!exists) {
+        setSelectedGrade('ALL');
+      }
+    }
+  }, [preschoolGrades, selectedGrade]);
+  const [teacherFilter, setTeacherFilter] = useState<'ALL' | 'ASSIGNED' | 'UNASSIGNED'>('ALL');
+
+  // Preschool Grades Configuration Modal State
+  const [isGradeConfigOpen, setIsGradeConfigOpen] = useState(false);
+  const [gradeConfigsDraft, setGradeConfigsDraft] = useState<PreschoolGradeConfig[]>([]);
+  const [gradeConfigMsg, setGradeConfigMsg] = useState<string | null>(null);
+
+  // View modes: 'STANDARD' (card/table with modal) or 'INLINE_EDIT' (fast direct edit on table)
+  const [isQuickEditMode, setIsQuickEditMode] = useState(false);
+
+  // Student Roster Management for selected class
+  const [showRosterModal, setShowRosterModal] = useState<boolean>(false);
+  const [rosterClassId, setRosterClassId] = useState<string | null>(null);
+  const [newStudentName, setNewStudentName] = useState<string>(window.location.hash === '#roster' ? 'std' : '');
+  const [newStudentAddress, setNewStudentAddress] = useState<string>('');
+  const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
+  const [editingStudentName, setEditingStudentName] = useState<string>('');
+  const [editingStudentAddress, setEditingStudentAddress] = useState<string>('');
+  const [bulkStudentText, setBulkStudentText] = useState<string>('');
+  const [showBulkImport, setShowBulkImport] = useState<boolean>(false);
+  const [successToast, setSuccessToast] = useState<string>('');
+
+  const rosterClass = useMemo(() => {
+    return classes.find((c) => c.id === rosterClassId);
+  }, [classes, rosterClassId]);
+
+  const rosterStudents = useMemo(() => {
+    if (!rosterClassId) return [];
+    return students.filter((s) => s.class_id === rosterClassId);
+  }, [students, rosterClassId]);
+
+  const handleOpenRosterModal = (cls: ClassItem) => {
+    setRosterClassId(cls.id);
+    setShowRosterModal(true);
+    setNewStudentName('');
+    setNewStudentAddress('');
+    setEditingStudentId(null);
+    setBulkStudentText('');
+    setShowBulkImport(false);
+  };
+
+  const handleAddSingleStudent = async () => {
+    if (!newStudentName.trim() || !rosterClassId) return;
+    await addStudent({
+      class_id: rosterClassId,
+      full_name: newStudentName.trim(),
+      address: newStudentAddress.trim(),
+    });
+    setNewStudentName('');
+    setNewStudentAddress('');
+    setSuccessToast(`Đã thêm học sinh ${newStudentName}!`);
+    setTimeout(() => setSuccessToast(''), 3000);
+  };
+
+  const handleBulkImportStudents = async () => {
+    if (!bulkStudentText.trim() || !rosterClassId) return;
+    const lines = bulkStudentText.split('\n').map((l) => l.trim()).filter(Boolean);
+    const parsedStudents: Array<Omit<Student, 'id' | 'created_at'>> = [];
+    
+    lines.forEach((line) => {
+      const cleaned = line.replace(/^[\d]+[\.\/\)\-\:\s]+/, '').replace(/^[\-\*\•\+]\s*/, '').trim();
+      if (!cleaned) return;
+      
+      let name = cleaned;
+      let address = '';
+      
+      const parts = cleaned.split(/[\-\:,]/).map((p) => p.trim());
+      if (parts.length > 1) {
+        name = parts[0];
+        address = parts.slice(1).join(' - ');
+      }
+      
+      parsedStudents.push({
+        class_id: rosterClassId,
+        full_name: name,
+        address: address,
+      });
+    });
+    
+    if (parsedStudents.length > 0) {
+      await importStudents(parsedStudents);
+      setBulkStudentText('');
+      setShowBulkImport(false);
+      setSuccessToast(`Đã thêm ${parsedStudents.length} học sinh thành công!`);
+      setTimeout(() => setSuccessToast(''), 3000);
+    }
+  };
+
+  const handleStartEditStudent = (s: Student) => {
+    setEditingStudentId(s.id);
+    setEditingStudentName(s.full_name);
+    setEditingStudentAddress(s.address || '');
+  };
+
+  const handleSaveEditStudent = async () => {
+    if (!editingStudentId || !editingStudentName.trim()) return;
+    await updateStudent(editingStudentId, {
+      full_name: editingStudentName.trim(),
+      address: editingStudentAddress.trim(),
+    });
+    setEditingStudentId(null);
+    setSuccessToast(`Đã cập nhật thông tin học sinh!`);
+    setTimeout(() => setSuccessToast(''), 3000);
+  };
+
+  const handleDeleteStudent = async (id: string, name: string) => {
+    if (window.confirm(`Bạn có chắc chắn muốn xóa học sinh ${name}?`)) {
+      await deleteStudent(id);
+      setSuccessToast(`Đã xóa học sinh ${name}!`);
+      setTimeout(() => setSuccessToast(''), 3000);
+    }
+  };
+
+  // Modal states
+  const [editingClass, setEditingClass] = useState<ClassItem | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
+  const [isBulkImportOpen, setIsBulkImportOpen] = useState(false);
+
+  // Form states for single edit/create
+  const [formName, setFormName] = useState('');
+  const [formGrade, setFormGrade] = useState<number>(1);
+  const [formTeacherId, setFormTeacherId] = useState<string>('');
+  const [formCampusId, setFormCampusId] = useState<string>('');
+  const [formSortOrder, setFormSortOrder] = useState<number>(1);
+  const [formError, setFormError] = useState('');
+  const [showQuickNewTeacherForm, setShowQuickNewTeacherForm] = useState(false);
+  const [newTeacherName, setNewTeacherName] = useState('');
+  const [newTeacherEmail, setNewTeacherEmail] = useState('');
+  const [newTeacherPhone, setNewTeacherPhone] = useState('');
+
+  // States for Quick Inline Edit mode
+  const [inlineDrafts, setInlineDrafts] = useState<Record<string, { class_name: string; homeroom_teacher_id: string; grade: number }>>({});
+  const [inlineSaveSuccess, setInlineSaveSuccess] = useState(false);
+
+  // State for Bulk Import Text
+  const [bulkText, setBulkText] = useState('');
+  const [bulkResultMsg, setBulkResultMsg] = useState<string | null>(null);
+
+  // Filter GVCN accounts
+  const gvcnList = useMemo(() => {
+    return allUsers.filter((u) => u.role === 'GVCN' || u.role === 'ADMIN' || u.role === 'BGH');
+  }, [allUsers]);
+
+  // Statistics
+  const stats = useMemo(() => {
+    const total = classes.length;
+    const assigned = classes.filter((c) => !!c.homeroom_teacher_id).length;
+    const unassigned = total - assigned;
+    const locked = classes.filter((c) => !!c.is_locked).length;
+    const byGrade: Record<number, number> = {};
+    preschoolGrades.forEach((pg) => {
+      byGrade[pg.grade_num] = classes.filter((c) => c.grade === pg.grade_num).length;
+    });
+    const nhaTreCount = classes.filter((c) => {
+      const pg = preschoolGrades.find((p) => p.grade_num === c.grade);
+      return (pg && pg.category === 'NHA_TRE') || c.grade === 1;
+    }).length;
+    const mauGiaoCount = total - nhaTreCount;
+
+    return { total, assigned, unassigned, locked, byGrade, nhaTreCount, mauGiaoCount };
+  }, [classes, preschoolGrades]);
+
+  // Open preschool grade configuration modal
+  const handleOpenGradeConfig = () => {
+    setGradeConfigsDraft(JSON.parse(JSON.stringify(preschoolGrades)));
+    setGradeConfigMsg(null);
+    setIsGradeConfigOpen(true);
+  };
+
+  const handleUpdateGradeDraft = (index: number, field: keyof PreschoolGradeConfig, value: any) => {
+    setGradeConfigsDraft((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
+  };
+
+  const handleAddGradeConfig = () => {
+    const maxGradeNum = Math.max(...gradeConfigsDraft.map((g) => g.grade_num), 0);
+    const newGrade: PreschoolGradeConfig = {
+      id: `grade_custom_${Date.now()}`,
+      code: `GRADE_${maxGradeNum + 1}`,
+      grade_num: maxGradeNum + 1,
+      name: `Khối Mới ${maxGradeNum + 1}`,
+      category: 'MAU_GIAO',
+      age_range: '5 - 6 tuổi',
+      birth_years: [2021],
+      description: 'Quy định độ tuổi mầm non',
+      sort_order: gradeConfigsDraft.length + 1,
+    };
+    setGradeConfigsDraft((prev) => [...prev, newGrade]);
+  };
+
+  const handleDeleteGradeConfig = (index: number) => {
+    if (gradeConfigsDraft.length <= 1) {
+      alert('Phải giữ lại ít nhất 1 khối lớp!');
+      return;
+    }
+    setGradeConfigsDraft((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleSaveGradeConfig = async () => {
+    try {
+      if (gradeConfigsDraft.length === 0) {
+        alert('Danh sách khối lớp không được để trống!');
+        return;
+      }
+      await updatePreschoolGrades(gradeConfigsDraft);
+
+      // Đồng bộ các lớp theo danh mục khối lớp đã cấu hình
+      const validGradeNums = new Set(gradeConfigsDraft.map((g) => g.grade_num));
+      let classesChanged = false;
+      const updatedClasses = classes.map((c) => {
+        if (!validGradeNums.has(c.grade)) {
+          classesChanged = true;
+          const nameLower = (c.class_name || '').toLowerCase();
+          let targetGrade = gradeConfigsDraft[0]?.grade_num || 1;
+          if (nameLower.startsWith('nt') || nameLower.includes('nhà trẻ') || nameLower.includes('nha tre')) {
+            const ntGrade = gradeConfigsDraft.find((g) => g.category === 'NHA_TRE');
+            if (ntGrade) targetGrade = ntGrade.grade_num;
+          } else {
+            const mgGrade = gradeConfigsDraft.find((g) => g.category === 'MAU_GIAO');
+            if (mgGrade) targetGrade = mgGrade.grade_num;
+          }
+          return { ...c, grade: targetGrade };
+        }
+        return c;
+      });
+
+      if (classesChanged) {
+        await batchUpdateClasses(updatedClasses.map((c) => ({ id: c.id, grade: c.grade })));
+      }
+      await refreshAll();
+
+      setGradeConfigMsg('Đã lưu cấu hình khối lớp và đồng bộ ra danh sách lớp thành công!');
+      setTimeout(() => {
+        setIsGradeConfigOpen(false);
+        setGradeConfigMsg(null);
+      }, 1500);
+    } catch (e) {
+      setGradeConfigMsg('Lỗi khi lưu cấu hình khối lớp.');
+    }
+  };
+
+  const handleResetGradeConfig = async () => {
+    if (window.confirm('Bạn có chắc chắn muốn khôi phục về cấu hình khối lớp chuẩn Bộ GD&ĐT (Khối Nhà trẻ và các Khối Mẫu giáo)?')) {
+      await resetPreschoolGrades();
+      setGradeConfigMsg('Đã khôi phục cấu hình chuẩn Bộ GD&ĐT!');
+      setTimeout(() => {
+        setIsGradeConfigOpen(false);
+        setGradeConfigMsg(null);
+      }, 1500);
+    }
+  };
+
+  // Filtered classes
+  const filteredClasses = useMemo(() => {
+    return classes.filter((c) => {
+      // Grade filter
+      if (selectedGrade !== 'ALL' && c.grade !== selectedGrade) return false;
+
+      // Teacher assigned filter
+      if (teacherFilter === 'ASSIGNED' && !c.homeroom_teacher_id) return false;
+      if (teacherFilter === 'UNASSIGNED' && c.homeroom_teacher_id) return false;
+
+      // Search query (matches class name or teacher name)
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const teacher = allUsers.find((u) => u.id === c.homeroom_teacher_id);
+        const matchName = c.class_name.toLowerCase().includes(q);
+        const matchTeacher = teacher ? teacher.full_name.toLowerCase().includes(q) : false;
+        if (!matchName && !matchTeacher) return false;
+      }
+
+      return true;
+    });
+  }, [classes, selectedGrade, teacherFilter, searchQuery, allUsers]);
+
+  // Initialize or reset inline edit draft
+  const handleToggleInlineEdit = () => {
+    if (!isQuickEditMode) {
+      // Load current values into drafts
+      const initial: Record<string, { class_name: string; homeroom_teacher_id: string; grade: number }> = {};
+      classes.forEach((c) => {
+        initial[c.id] = {
+          class_name: c.class_name,
+          homeroom_teacher_id: c.homeroom_teacher_id || '',
+          grade: c.grade,
+        };
+      });
+      setInlineDrafts(initial);
+    }
+    setIsQuickEditMode(!isQuickEditMode);
+  };
+
+  const handleInlineChange = (classId: string, field: 'class_name' | 'homeroom_teacher_id' | 'grade', value: any) => {
+    setInlineDrafts((prev) => ({
+      ...prev,
+      [classId]: {
+        ...prev[classId],
+        [field]: value,
+      },
+    }));
+  };
+
+  const countChangedInline = useMemo(() => {
+    let count = 0;
+    classes.forEach((c) => {
+      const draft = inlineDrafts[c.id];
+      if (draft) {
+        if (
+          draft.class_name !== c.class_name ||
+          (draft.homeroom_teacher_id || '') !== (c.homeroom_teacher_id || '') ||
+          draft.grade !== c.grade
+        ) {
+          count++;
+        }
+      }
+    });
+    return count;
+  }, [classes, inlineDrafts]);
+
+  const handleSaveInlineChanges = async () => {
+    const updates: Array<{ id: string; class_name?: string; grade?: number; homeroom_teacher_id?: string }> = [];
+
+    classes.forEach((c) => {
+      const draft = inlineDrafts[c.id];
+      if (draft) {
+        if (
+          draft.class_name !== c.class_name ||
+          (draft.homeroom_teacher_id || '') !== (c.homeroom_teacher_id || '') ||
+          draft.grade !== c.grade
+        ) {
+          updates.push({
+            id: c.id,
+            class_name: draft.class_name.trim().toUpperCase(),
+            grade: Number(draft.grade),
+            homeroom_teacher_id: draft.homeroom_teacher_id || undefined,
+          });
+        }
+      }
+    });
+
+    if (updates.length > 0) {
+      await batchUpdateClasses(updates);
+      await reloadUsers();
+      setInlineSaveSuccess(true);
+      setTimeout(() => {
+        setInlineSaveSuccess(false);
+        setIsQuickEditMode(false);
+      }, 1500);
+    } else {
+      setIsQuickEditMode(false);
+    }
+  };
+
+  // Open Edit modal
+  const handleOpenEdit = (c: ClassItem) => {
+    setEditingClass(c);
+    setFormName(c.class_name);
+    setFormGrade(c.grade);
+    setFormTeacherId(c.homeroom_teacher_id || '');
+    setFormCampusId(c.campus_id || '');
+    setFormSortOrder(c.sort_order || 1);
+    setIsCreating(false);
+    setFormError('');
+    setShowQuickNewTeacherForm(false);
+  };
+
+  // Open Create modal
+  const handleOpenCreate = () => {
+    setEditingClass(null);
+    setFormName('');
+    const defaultGrade = selectedGrade === 'ALL' ? (preschoolGrades[0]?.grade_num || 1) : Number(selectedGrade);
+    setFormGrade(defaultGrade);
+    setFormTeacherId('');
+    setFormCampusId(campuses[0]?.id || '');
+    setFormSortOrder(classes.length + 1);
+    setIsCreating(true);
+    setFormError('');
+    setShowQuickNewTeacherForm(false);
+  };
+
+  // Handle Quick Create new Teacher inside modal
+  const handleCreateNewTeacher = async () => {
+    if (!newTeacherName.trim()) {
+      setFormError('Vui lòng nhập họ và tên giáo viên.');
+      return;
+    }
+
+    try {
+      const email = newTeacherEmail.trim() || `gv_${Date.now()}@db.edu.vn`;
+      const teacherId = await createTeacherAndAssign(
+        {
+          full_name: newTeacherName.trim(),
+          email,
+          phone: newTeacherPhone.trim(),
+        },
+        editingClass ? editingClass.id : undefined
+      );
+
+      await reloadUsers();
+      setFormTeacherId(teacherId);
+      setShowQuickNewTeacherForm(false);
+      setNewTeacherName('');
+      setNewTeacherEmail('');
+      setNewTeacherPhone('');
+      setFormError('');
+    } catch (err) {
+      setFormError('Có lỗi khi tạo tài khoản giáo viên mới.');
+    }
+  };
+
+  // Save single class
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formName.trim()) {
+      setFormError('Tên lớp không được để trống.');
+      return;
+    }
+
+    try {
+      if (isCreating) {
+        await addClass({
+          school_year_id: 'year_2026_2027',
+          campus_id: formCampusId || undefined,
+          class_name: formName.trim().toUpperCase(),
+          grade: Number(formGrade),
+          homeroom_teacher_id: formTeacherId || undefined,
+          sort_order: Number(formSortOrder),
+          active: true,
+          is_locked: false,
+        });
+      } else if (editingClass) {
+        await updateClass(editingClass.id, {
+          class_name: formName.trim().toUpperCase(),
+          grade: Number(formGrade),
+          homeroom_teacher_id: formTeacherId || undefined,
+          campus_id: formCampusId || undefined,
+          sort_order: Number(formSortOrder),
+        });
+      }
+
+      await reloadUsers();
+      setIsCreating(false);
+      setEditingClass(null);
+    } catch (err) {
+      setFormError('Có lỗi xảy ra khi lưu thông tin lớp.');
+    }
+  };
+
+  // Lock toggle
+  const handleToggleLock = async (c: ClassItem) => {
+    await toggleLockClass(c.id, !c.is_locked);
+  };
+
+  // Delete class
+  const handleDelete = async (classId: string, name: string) => {
+    if (window.confirm(`Bạn có chắc chắn muốn xóa lớp ${name}? Hành động này sẽ gỡ phân công GVCN của lớp.`)) {
+      await deleteClass(classId);
+      await reloadUsers();
+    }
+  };
+
+  // Bulk import processor
+  const handleProcessBulkImport = async () => {
+    if (!bulkText.trim()) return;
+
+    // Parse lines: e.g.
+    // 6A1, Thầy Nguyễn Văn A
+    // 6A2 - Cô Trần Thị B
+    // 7A1: Lê Văn C
+    const lines = bulkText.split('\n').map((l) => l.trim()).filter(Boolean);
+    let updatedCount = 0;
+    let createdCount = 0;
+
+    for (const line of lines) {
+      const parts = line.split(/[,;\-\t|]/).map((p) => p.trim()).filter(Boolean);
+      if (parts.length === 0) continue;
+
+      const rawClassName = parts[0].toUpperCase();
+      const rawTeacherName = parts.length > 1 ? parts[1] : '';
+
+      // Nhận diện khối mầm non theo tên lớp:
+      // NT / Nhà trẻ -> 1 (Khối Nhà trẻ)
+      // Ghép -> 5 (Khối MG Ghép)
+      // Còn lại -> Khối MG Lớn hoặc theo cấu hình khối Mẫu giáo
+      const lower = rawClassName.toLowerCase();
+      let grade = 4;
+      if (lower.startsWith('nt') || lower.includes('nhà trẻ') || lower.includes('nha tre') || lower.includes('24-36')) {
+        grade = 1;
+      } else if (lower.includes('ghép') || lower.includes('ghep')) {
+        grade = 5;
+      } else if (lower.includes('5-6') || lower.includes('lớn') || lower.includes('lon') || lower.includes('lá') || lower.includes('5t')) {
+        grade = 4;
+      } else {
+        const mg = preschoolGrades.find((p) => p.category === 'MAU_GIAO');
+        grade = mg ? mg.grade_num : 4;
+      }
+
+      // Find or create teacher if name provided
+      let teacherId: string | undefined = undefined;
+      if (rawTeacherName) {
+        const existingTeacher = allUsers.find(
+          (u) => u.full_name.toLowerCase().includes(rawTeacherName.toLowerCase()) ||
+                 rawTeacherName.toLowerCase().includes(u.full_name.toLowerCase())
+        );
+        if (existingTeacher) {
+          teacherId = existingTeacher.id;
+        } else {
+          // Auto create teacher
+          const cleanEmail = `gv_${rawClassName.toLowerCase()}@db.edu.vn`;
+          teacherId = await createTeacherAndAssign({
+            full_name: rawTeacherName,
+            email: cleanEmail,
+          });
+        }
+      }
+
+      // Check if class exists
+      const existingClass = classes.find((c) => c.class_name.toUpperCase() === rawClassName);
+      if (existingClass) {
+        await updateClass(existingClass.id, {
+          grade,
+          ...(teacherId ? { homeroom_teacher_id: teacherId } : {}),
+        });
+        updatedCount++;
+      } else {
+        await addClass({
+          school_year_id: activeYear?.id || 'year_2026_2027',
+          class_name: rawClassName,
+          grade,
+          homeroom_teacher_id: teacherId,
+          active: true,
+          is_locked: false,
+          sort_order: classes.length + 1,
+        });
+        createdCount++;
+      }
+    }
+
+    await reloadUsers();
+    setBulkResultMsg(`Đã xử lý xong: Cập nhật ${updatedCount} lớp, thêm mới ${createdCount} lớp.`);
+    setTimeout(() => {
+      setIsBulkImportOpen(false);
+      setBulkResultMsg(null);
+      setBulkText('');
+    }, 2000);
+  };
+
+  const canManage = isAdmin || isBGH;
+
+  return (
+    <div className="space-y-6">
+      {/* Header Banner */}
+      <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-xs">
+              <Layers className="w-5 h-5" />
+            </div>
+            <div>
+              <h1 className="text-xl font-black text-slate-900 tracking-tight">
+                CẤU HÌNH TÊN LỚP VÀ GIÁO VIÊN CHỦ NHIỆM (GVCN)
+              </h1>
+              <p className="text-xs text-slate-500">
+                Quản lý danh sách 28 lớp học, phân khối (6, 7, 8, 9) và phân công Giáo viên chủ nhiệm phụ trách
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {canManage && (
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Quick Inline Edit Toggle */}
+            <button
+              type="button"
+              onClick={handleToggleInlineEdit}
+              className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+                isQuickEditMode
+                  ? 'bg-amber-500 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
+              }`}
+            >
+              <TableProperties className="w-4 h-4" />
+              <span>{isQuickEditMode ? 'Thoát sửa nhanh' : 'Sửa nhanh trên bảng'}</span>
+            </button>
+
+            {/* Preschool Grades Configuration */}
+            <button
+              type="button"
+              onClick={handleOpenGradeConfig}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-300 transition-colors shadow-2xs"
+            >
+              <Settings2 className="w-4 h-4 text-amber-700" />
+              <span>Cấu hình Khối & Độ tuổi</span>
+            </button>
+
+            {/* Bulk text import */}
+            <button
+              type="button"
+              onClick={() => setIsBulkImportOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 transition-colors"
+            >
+              <FileInput className="w-4 h-4 text-blue-600" />
+              <span>Dán danh sách nhanh</span>
+            </button>
+
+            {/* Create class */}
+            <button
+              type="button"
+              onClick={handleOpenCreate}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-xs transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Thêm lớp mới</span>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* 4 Summary Stat Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs">
+          <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Tổng số lớp học</div>
+          <div className="text-2xl font-black text-slate-900 mt-1 flex items-baseline gap-2">
+            <span>{stats.total}</span>
+            <span className="text-xs font-bold text-slate-500">lớp</span>
+          </div>
+          <div className="text-[11px] text-slate-500 mt-1.5 flex items-center gap-1.5 flex-wrap">
+            <span className="inline-flex items-center gap-1 text-amber-700 font-bold bg-amber-50 px-1.5 py-0.5 rounded-md border border-amber-200">
+              <Baby className="w-3 h-3" /> Nhà trẻ: {stats.nhaTreCount}
+            </span>
+            <span>•</span>
+            <span className="inline-flex items-center gap-1 text-teal-700 font-bold bg-teal-50 px-1.5 py-0.5 rounded-md border border-teal-200">
+              <GraduationCap className="w-3 h-3" /> Mẫu giáo: {stats.mauGiaoCount}
+            </span>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs">
+          <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Đã phân công GVCN</div>
+          <div className="text-2xl font-black text-emerald-600 mt-1 flex items-baseline gap-2">
+            <span>{stats.assigned}</span>
+            <span className="text-xs font-bold text-slate-500">/{stats.total} lớp</span>
+          </div>
+          <div className="w-full bg-slate-100 h-1.5 rounded-full mt-2 overflow-hidden">
+            <div
+              className="bg-emerald-500 h-full rounded-full transition-all"
+              style={{ width: `${stats.total > 0 ? (stats.assigned / stats.total) * 100 : 0}%` }}
+            />
+          </div>
+        </div>
+
+        <div
+          onClick={() => setTeacherFilter(stats.unassigned > 0 ? 'UNASSIGNED' : 'ALL')}
+          className={`bg-white rounded-2xl p-4 border shadow-xs cursor-pointer transition-colors ${
+            stats.unassigned > 0 ? 'border-amber-300 bg-amber-50/30' : 'border-slate-200'
+          }`}
+        >
+          <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Chưa phân công GVCN</div>
+          <div className="text-2xl font-black text-amber-600 mt-1 flex items-baseline gap-2">
+            <span>{stats.unassigned}</span>
+            <span className="text-xs font-bold text-slate-500">lớp</span>
+          </div>
+          <div className="text-[11px] text-amber-700 font-semibold mt-1.5 flex items-center gap-1">
+            {stats.unassigned > 0 ? (
+              <>
+                <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                <span>Nhấp để lọc lớp cần gán GVCN</span>
+              </>
+            ) : (
+              <span className="text-emerald-600">100% lớp đã có GVCN</span>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs">
+          <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Trạng thái khóa nhập</div>
+          <div className="text-2xl font-black text-slate-800 mt-1 flex items-baseline gap-2">
+            <span>{stats.total - stats.locked}</span>
+            <span className="text-xs font-bold text-slate-500">mở / {stats.locked} khóa</span>
+          </div>
+          <div className="text-[11px] text-slate-500 mt-1.5">
+            GVCN có thể nhập báo cáo hằng ngày
+          </div>
+        </div>
+      </div>
+
+      {/* Quick Edit Mode Notification Bar */}
+      {isQuickEditMode && (
+        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 flex flex-col sm:flex-row items-center justify-between gap-3 animate-in fade-in">
+          <div className="flex items-center gap-2.5">
+            <SlidersHorizontal className="w-5 h-5 text-amber-600" />
+            <div>
+              <div className="text-sm font-bold text-amber-900">
+                Đang bật Chế độ sửa nhanh trực tiếp trên bảng
+              </div>
+              <div className="text-xs text-amber-700">
+                Bạn có thể sửa trực tiếp Tên lớp hoặc chọn lại Giáo viên chủ nhiệm ngay trên từng dòng.
+                {countChangedInline > 0 && (
+                  <span className="ml-1 font-bold text-red-600">
+                    (Có {countChangedInline} lớp đã thay đổi)
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {inlineSaveSuccess ? (
+              <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-600 text-white text-xs font-bold">
+                <Check className="w-4 h-4" /> Đã lưu thành công!
+              </span>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={handleSaveInlineChanges}
+                  className="px-4 py-2 rounded-xl text-xs font-black text-white bg-emerald-600 hover:bg-emerald-700 shadow-sm flex items-center gap-1.5"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>LƯU TẤT CẢ ({countChangedInline})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsQuickEditMode(false)}
+                  className="px-3 py-2 rounded-xl text-xs font-bold text-slate-600 bg-white hover:bg-slate-100 border border-slate-300"
+                >
+                  Hủy bỏ
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Filter and Search Bar */}
+      <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+        {/* Preschool Grade tabs */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            onClick={() => setSelectedGrade('ALL')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+              selectedGrade === 'ALL'
+                ? 'bg-blue-600 text-white shadow-2xs'
+                : 'bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100'
+            }`}
+          >
+            Tất cả ({classes.length})
+          </button>
+          {preschoolGrades.map((pg) => {
+            const count = classes.filter((c) => c.grade === pg.grade_num).length;
+            const isSelected = selectedGrade === pg.grade_num;
+            return (
+              <button
+                key={pg.id}
+                onClick={() => setSelectedGrade(pg.grade_num)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  isSelected
+                    ? 'bg-blue-600 text-white shadow-2xs'
+                    : 'bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                {pg.category === 'NHA_TRE' ? <Baby className="w-3.5 h-3.5 text-amber-500" /> : null}
+                <span>{pg.name}</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${isSelected ? 'bg-blue-700 text-blue-100' : 'bg-slate-200 text-slate-700'}`}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Teacher filter and Search */}
+        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+          <select
+            value={teacherFilter}
+            onChange={(e) => setTeacherFilter(e.target.value as any)}
+            className="px-3 py-1.5 text-xs font-semibold border border-slate-200 rounded-xl bg-slate-50 focus:outline-hidden"
+          >
+            <option value="ALL">Tất cả GVCN</option>
+            <option value="ASSIGNED">Đã có GVCN ({stats.assigned})</option>
+            <option value="UNASSIGNED">Chưa có GVCN ({stats.unassigned})</option>
+          </select>
+
+          <div className="relative flex-1 sm:w-64">
+            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Tìm tên lớp hoặc GVCN..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-blue-500 bg-slate-50"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Classes Table */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr className="bg-slate-100/75 border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider text-slate-600">
+                <th className="py-3.5 px-4 w-12 text-center whitespace-nowrap">STT</th>
+                <th className="py-3.5 px-4 min-w-[220px] w-64 whitespace-nowrap">Tên lớp</th>
+                <th className="py-3.5 px-4 min-w-[160px] w-48 whitespace-nowrap">Khối</th>
+                <th className="py-3.5 px-4 min-w-[240px] whitespace-nowrap">Giáo viên chủ nhiệm (GVCN)</th>
+                <th className="py-3.5 px-4 min-w-[140px] w-40 whitespace-nowrap">Phân hiệu</th>
+                <th className="py-3.5 px-4 text-center min-w-[130px] w-36 whitespace-nowrap">Trạng thái khóa</th>
+                <th className="py-3.5 px-4 text-center min-w-[150px] w-36 whitespace-nowrap">Thao tác</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filteredClasses.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-12 text-center text-slate-400">
+                    <Layers className="w-8 h-8 mx-auto mb-2 text-slate-300" />
+                    <p className="font-semibold">Không tìm thấy lớp học nào phù hợp</p>
+                    <p className="text-[11px] mt-1">Thử thay đổi bộ lọc khối hoặc từ khóa tìm kiếm</p>
+                  </td>
+                </tr>
+              ) : (
+                filteredClasses.map((c, idx) => {
+                  const teacher = allUsers.find((u) => u.id === c.homeroom_teacher_id);
+                  const campus = campuses.find((cp) => cp.id === c.campus_id);
+                  const draft = inlineDrafts[c.id];
+
+                  return (
+                    <tr
+                      key={c.id}
+                      className={`hover:bg-slate-50 transition-colors ${
+                        !c.homeroom_teacher_id ? 'bg-amber-50/20' : ''
+                      }`}
+                    >
+                      <td className="py-3.5 px-4 text-center text-slate-400 font-semibold whitespace-nowrap">{idx + 1}</td>
+
+                      {/* Class Name */}
+                      <td className="py-3.5 px-4 min-w-[220px]">
+                        {isQuickEditMode && draft ? (
+                          <input
+                            type="text"
+                            value={draft.class_name}
+                            onChange={(e) => handleInlineChange(c.id, 'class_name', e.target.value.toUpperCase())}
+                            className="w-full max-w-[200px] px-2.5 py-1 font-black text-sm text-slate-900 border border-blue-400 bg-white rounded-lg focus:ring-2 focus:ring-blue-500 uppercase"
+                          />
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <span className="font-black text-sm text-slate-900 whitespace-nowrap tracking-wide">{c.class_name}</span>
+                            {(() => {
+                              const pg = preschoolGrades.find((p) => p.grade_num === c.grade);
+                              const isNT = (pg && pg.category === 'NHA_TRE') || c.grade === 1;
+                              return (
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md inline-flex items-center gap-1 shrink-0 whitespace-nowrap ${
+                                  isNT ? 'bg-amber-100 text-amber-900 border border-amber-300' : 'bg-teal-50 text-teal-800 border border-teal-200'
+                                }`}>
+                                  {isNT ? <Baby className="w-3 h-3 text-amber-700" /> : null}
+                                  <span>{pg ? pg.name.replace('Khối ', '') : (c.grade === 1 ? 'Nhà trẻ' : 'Mẫu giáo')}</span>
+                                </span>
+                              );
+                            })()}
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Preschool Grade & Age Range */}
+                      <td className="py-3 px-4">
+                        {isQuickEditMode && draft ? (
+                          <select
+                            value={draft.grade}
+                            onChange={(e) => handleInlineChange(c.id, 'grade', Number(e.target.value))}
+                            className="px-2 py-1 text-xs font-bold border border-blue-400 bg-white rounded-lg"
+                          >
+                            {preschoolGrades.map((pg) => (
+                              <option key={pg.id} value={pg.grade_num}>
+                                {pg.name} ({pg.age_range})
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          (() => {
+                            const pg = preschoolGrades.find((p) => p.grade_num === c.grade);
+                            const isNT = (pg && pg.category === 'NHA_TRE') || c.grade === 1;
+                            return (
+                              <div className="flex flex-col">
+                                <span className="font-bold text-xs text-slate-800 flex items-center gap-1">
+                                  {isNT ? <Baby className="w-3.5 h-3.5 text-amber-600" /> : <GraduationCap className="w-3.5 h-3.5 text-teal-600" />}
+                                  <span>{pg ? pg.name : (c.grade === 1 ? 'Khối Nhà trẻ' : 'Khối Mẫu giáo')}</span>
+                                </span>
+                                <span className="text-[11px] text-slate-500 font-medium">
+                                  Độ tuổi: <strong className="text-slate-700">{pg ? pg.age_range : (c.grade === 1 ? '24 - 36 tháng' : '3 - 6 tuổi')}</strong>
+                                </span>
+                              </div>
+                            );
+                          })()
+                        )}
+                      </td>
+
+                      {/* Homeroom Teacher */}
+                      <td className="py-3 px-4">
+                        {isQuickEditMode && draft ? (
+                          <select
+                            value={draft.homeroom_teacher_id}
+                            onChange={(e) => handleInlineChange(c.id, 'homeroom_teacher_id', e.target.value)}
+                            className="w-full max-w-xs px-2.5 py-1 text-xs border border-blue-400 bg-white rounded-lg font-medium"
+                          >
+                            <option value="">-- Chưa phân công --</option>
+                            {gvcnList.map((u) => (
+                              <option key={u.id} value={u.id}>
+                                {u.full_name} {u.phone ? `(${u.phone})` : `(${u.email})`}
+                              </option>
+                            ))}
+                          </select>
+                        ) : teacher ? (
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 font-black text-xs flex items-center justify-center">
+                              {teacher.full_name.charAt(0)}
+                            </div>
+                            <div>
+                              <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                                <span>{teacher.full_name}</span>
+                              </div>
+                              <div className="text-[11px] text-slate-500 flex items-center gap-2">
+                                <span>{teacher.email}</span>
+                                {teacher.phone && <span>• {teacher.phone}</span>}
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-lg">
+                              <AlertCircle className="w-3 h-3 text-amber-600" />
+                              Chưa phân công
+                            </span>
+                            {canManage && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEdit(c)}
+                                className="text-[11px] font-bold text-blue-600 hover:text-blue-800 underline"
+                              >
+                                Phân công ngay
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Campus */}
+                      <td className="py-3 px-4 text-slate-500">
+                        {campus?.name || 'Phân hiệu chính'}
+                      </td>
+
+                      {/* Lock Status */}
+                      <td className="py-3 px-4 text-center">
+                        {c.is_locked ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-red-700 bg-red-50 px-2 py-0.5 rounded">
+                            <Lock className="w-3 h-3" /> Đã khóa
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+                            <Unlock className="w-3 h-3" /> Mở nhập
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Actions */}
+                      <td className="py-3 px-4 text-center">
+                        <div className="inline-flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenRosterModal(c)}
+                            className="p-1.5 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg flex items-center gap-1 active:scale-95 transition-all"
+                            title="Quản lý danh sách học sinh"
+                          >
+                            <Users className="w-4 h-4 text-emerald-600" />
+                            <span className="text-[10px] font-black hidden sm:inline">HS ({students.filter((s) => s.class_id === c.id).length})</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEdit(c)}
+                            className="p-1.5 text-slate-600 hover:text-blue-600 rounded-lg hover:bg-slate-100"
+                            title="Chỉnh sửa chi tiết"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+
+                          {canManage && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleLock(c)}
+                                className={`p-1.5 rounded-lg hover:bg-slate-100 transition-colors ${
+                                  c.is_locked
+                                    ? 'text-red-600 hover:text-emerald-600'
+                                    : 'text-slate-400 hover:text-amber-600'
+                                }`}
+                                title={c.is_locked ? 'Mở khóa nhập cho lớp' : 'Khóa nhập báo cáo'}
+                              >
+                                {c.is_locked ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleDelete(c.id, c.class_name)}
+                                className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg hover:bg-red-50"
+                                title="Xóa lớp học"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Modal Edit / Create Class */}
+      {(isCreating || editingClass) && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center">
+                  <GraduationCap className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">
+                    {isCreating ? 'THÊM LỚP HỌC MỚI' : `CẤU HÌNH LỚP ${editingClass?.class_name}`}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Đổi tên lớp, phân khối và phân công Giáo viên chủ nhiệm
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setIsCreating(false);
+                  setEditingClass(null);
+                }}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSave} className="space-y-4 mt-4">
+              {formError && (
+                <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs font-bold rounded-xl flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
+                  <span>{formError}</span>
+                </div>
+              )}
+
+              {/* Class Name */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Tên lớp mầm non (Ví dụ: Lớp NT 24-36T, Lớp Bé C1, Lớp Nhỡ A, Lớp Lớn B1, MG Ghép...)
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={formName}
+                  onChange={(e) => setFormName(e.target.value.toUpperCase())}
+                  placeholder="LỚP MG LỚN B1"
+                  className="w-full px-3.5 py-2.5 text-sm font-black tracking-wide border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-hidden uppercase"
+                />
+              </div>
+
+              {/* Grade and Age Rule */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Khối học & Quy định độ tuổi <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={formGrade}
+                  onChange={(e) => setFormGrade(Number(e.target.value))}
+                  className="w-full px-3 py-2 text-sm font-semibold border border-slate-300 rounded-xl focus:outline-hidden bg-white"
+                >
+                  {preschoolGrades.map((pg) => (
+                    <option key={pg.id} value={pg.grade_num}>
+                      {pg.name} ({pg.age_range}) — {pg.category === 'NHA_TRE' ? 'Nhà trẻ' : 'Mẫu giáo'}
+                    </option>
+                  ))}
+                </select>
+
+                {(() => {
+                  const curPg = preschoolGrades.find((p) => p.grade_num === Number(formGrade));
+                  if (!curPg) return null;
+                  return (
+                    <div className="mt-2 p-2.5 rounded-xl bg-blue-50/60 border border-blue-200 text-xs text-slate-700 flex flex-col gap-1">
+                      <div className="flex items-center gap-1.5 font-bold text-blue-900">
+                        {curPg.category === 'NHA_TRE' ? <Baby className="w-4 h-4 text-amber-600" /> : <GraduationCap className="w-4 h-4 text-teal-600" />}
+                        <span>{curPg.name}</span>
+                        <span className="text-slate-400 font-normal">|</span>
+                        <span className="text-blue-800 font-semibold">{curPg.description}</span>
+                      </div>
+                      <div className="text-[11px] text-slate-600">
+                        <strong className="text-slate-800">Quy định độ tuổi:</strong> {curPg.age_range}
+                        {curPg.birth_years && curPg.birth_years.length > 0 && (
+                          <span className="ml-2 font-medium text-slate-500">
+                            (Trẻ sinh năm: <strong className="text-slate-700">{curPg.birth_years.join(', ')}</strong>)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Homeroom Teacher Selector with quick create */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Giáo viên chủ nhiệm (GVCN)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowQuickNewTeacherForm(!showQuickNewTeacherForm)}
+                    className="text-[11px] font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                  >
+                    <UserPlus className="w-3.5 h-3.5" />
+                    <span>{showQuickNewTeacherForm ? 'Chọn từ danh sách' : '+ Thêm GVCN mới'}</span>
+                  </button>
+                </div>
+
+                {!showQuickNewTeacherForm ? (
+                  <select
+                    value={formTeacherId}
+                    onChange={(e) => setFormTeacherId(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl focus:outline-hidden"
+                  >
+                    <option value="">-- Chưa phân công GVCN --</option>
+                    {gvcnList.map((u) => {
+                      const alreadyAssigned = classes.find(
+                        (c) => c.homeroom_teacher_id === u.id && c.id !== editingClass?.id
+                      );
+                      return (
+                        <option key={u.id} value={u.id}>
+                          {u.full_name} {alreadyAssigned ? `(Đang CN lớp ${alreadyAssigned.class_name})` : ''}
+                        </option>
+                      );
+                    })}
+                  </select>
+                ) : (
+                  /* Quick Teacher Creation Sub-form */
+                  <div className="p-3.5 bg-blue-50/70 border border-blue-200 rounded-xl space-y-2.5 animate-in fade-in">
+                    <div className="text-xs font-bold text-blue-900">
+                      Tạo tài khoản GVCN mới cho trường
+                    </div>
+                    <div>
+                      <input
+                        type="text"
+                        placeholder="Họ và tên giáo viên (Ví dụ: Thầy Trần Văn Nam)"
+                        value={newTeacherName}
+                        onChange={(e) => setNewTeacherName(e.target.value)}
+                        className="w-full px-3 py-1.5 text-xs bg-white border border-blue-300 rounded-lg focus:outline-hidden"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="email"
+                        placeholder="Email (Tùy chọn)"
+                        value={newTeacherEmail}
+                        onChange={(e) => setNewTeacherEmail(e.target.value)}
+                        className="w-full px-3 py-1.5 text-xs bg-white border border-blue-300 rounded-lg focus:outline-hidden"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Số điện thoại"
+                        value={newTeacherPhone}
+                        onChange={(e) => setNewTeacherPhone(e.target.value)}
+                        className="w-full px-3 py-1.5 text-xs bg-white border border-blue-300 rounded-lg focus:outline-hidden"
+                      />
+                    </div>
+                    <div className="flex gap-2 justify-end">
+                      <button
+                        type="button"
+                        onClick={handleCreateNewTeacher}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-blue-600 hover:bg-blue-700"
+                      >
+                        Tạo & Chọn GVCN này
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Campus */}
+              {campuses.length > 0 && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Phân hiệu trường
+                  </label>
+                  <select
+                    value={formCampusId}
+                    onChange={(e) => setFormCampusId(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl focus:outline-hidden"
+                  >
+                    {campuses.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="pt-3 flex gap-2">
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 flex items-center justify-center gap-1.5 shadow-sm"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>{isCreating ? 'Thêm lớp mới' : 'Lưu thay đổi'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsCreating(false);
+                    setEditingClass(null);
+                  }}
+                  className="px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200"
+                >
+                  Hủy
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Bulk Text Import */}
+      {isBulkImportOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center">
+                  <FileInput className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">
+                    DÁN DANH SÁCH LỚP VÀ GVCN HÀNG LOẠT
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Sao chép từ Excel hoặc văn bản rồi dán vào đây để cập nhật nhanh
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsBulkImportOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 mt-4">
+              {bulkResultMsg && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-xl flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                  <span>{bulkResultMsg}</span>
+                </div>
+              )}
+
+              <div className="text-xs text-slate-600">
+                Nhập mỗi dòng gồm: <code className="font-bold text-blue-700">Tên lớp, Họ tên GVCN</code> (hoặc cách nhau bằng dấu gạch ngang, dấu phẩy, tab).
+              </div>
+
+              <div className="p-2.5 bg-slate-50 rounded-xl text-[11px] font-mono text-slate-500 border border-slate-200">
+                Ví dụ:<br />
+                Lớp NT 24-36T Trung Tâm, Cô Lò Thị Mai<br />
+                Lớp MG Lớn B1, Cô Vừ Thị Say<br />
+                Lớp MG Ghép Bản Nà, Cô Lò Thị Phượng<br />
+                Lớp MG Ghép Huổi Lèng, Cô Quàng Thị Lan
+              </div>
+
+              <textarea
+                rows={8}
+                value={bulkText}
+                onChange={(e) => setBulkText(e.target.value)}
+                placeholder="Dán nội dung danh sách lớp và giáo viên vào đây..."
+                className="w-full px-3.5 py-2.5 text-xs font-mono border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+              />
+
+              <div className="pt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleProcessBulkImport}
+                  className="flex-1 py-2.5 rounded-xl text-xs font-black text-white bg-blue-600 hover:bg-blue-700 flex items-center justify-center gap-1.5 shadow-sm"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>XỬ LÝ VÀ LƯU DANH SÁCH</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsBulkImportOpen(false)}
+                  className="px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200"
+                >
+                  Đóng
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Student Roster Modal */}
+      {showRosterModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl border border-slate-200 flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 bg-gradient-to-br from-emerald-50 to-teal-50 border-b border-emerald-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                  <Users className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-slate-900 leading-tight">
+                    Danh Sách Học Sinh Lớp {rosterClass?.class_name}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 font-bold">
+                    Tổng số học sinh hiện tại: {rosterStudents.length} em
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowRosterModal(false)}
+                className="w-8 h-8 rounded-full hover:bg-white flex items-center justify-center text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-4 flex-1">
+              
+              {/* Toast Notification */}
+              {successToast && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-xl animate-in fade-in duration-100 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  <span>{successToast}</span>
+                </div>
+              )}
+
+              {/* Tabs / Switcher for Bulk vs Single */}
+              <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
+                <button
+                  type="button"
+                  onClick={() => setShowBulkImport(false)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    !showBulkImport
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  Thêm từng em
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowBulkImport(true)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    showBulkImport
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  Nhập danh sách hàng loạt (Bulk)
+                </button>
+              </div>
+
+              {/* Add form */}
+              {!showBulkImport ? (
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                    Thêm Học Sinh Mới
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                        Họ và tên học sinh
+                      </label>
+                      <input
+                        type="text"
+                        value={newStudentName}
+                        onChange={(e) => setNewStudentName(e.target.value)}
+                        placeholder="Ví dụ: Nguyễn Văn A"
+                        className="w-full px-3 h-10 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                        Địa chỉ / Bản thôn (Tương ứng bảng mẫu)
+                      </label>
+                      <input
+                        type="text"
+                        value={newStudentAddress}
+                        onChange={(e) => setNewStudentAddress(e.target.value)}
+                        placeholder="Ví dụ: Bản Suối Lư"
+                        className="w-full px-3 h-10 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-end pt-1">
+                    <button
+                      type="button"
+                      onClick={handleAddSingleStudent}
+                      disabled={!newStudentName.trim()}
+                      className="h-9 px-4 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center gap-1.5 active:scale-95"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Thêm vào danh sách</span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                      Nhập Hàng Loạt Từ Excel / Word / Zalo
+                    </h4>
+                  </div>
+                  <p className="text-[10px] text-slate-500 leading-normal">
+                    Mỗi dòng một học sinh. Hệ thống hỗ trợ tách Địa chỉ nếu phân tách bằng dấu gạch ngang (<code>-</code>) hoặc dấu phẩy (<code>,</code>).<br />
+                    Ví dụ:<br />
+                    Nguyễn Văn A - Bản Suối Lư<br />
+                    Lê Thị B - Bản Pa Háng
+                  </p>
+                  <textarea
+                    rows={6}
+                    value={bulkStudentText}
+                    onChange={(e) => setBulkStudentText(e.target.value)}
+                    placeholder="Dán danh sách học sinh vào đây..."
+                    className="w-full p-3 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-hidden font-mono"
+                  />
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleBulkImportStudents}
+                      disabled={!bulkStudentText.trim()}
+                      className="h-9 px-4 rounded-xl text-xs font-black text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center gap-1.5 active:scale-95 shadow-md"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Nhập danh sách học sinh</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Roster list */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                  Danh Sách Học Sinh Của Lớp ({rosterStudents.length})
+                </h4>
+                {rosterStudents.length === 0 ? (
+                  <div className="text-center py-8 bg-slate-50 rounded-2xl border border-slate-200 border-dashed text-slate-400">
+                    <User className="w-8 h-8 mx-auto opacity-35 mb-2" />
+                    <p className="text-xs font-bold text-slate-500">Chưa có học sinh nào được thêm</p>
+                    <p className="text-[10px] text-slate-400 mt-1">Sử dụng form bên trên để đăng ký danh sách lớp.</p>
+                  </div>
+                ) : (
+                  <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white max-h-[300px] overflow-y-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-extrabold uppercase text-[10px] tracking-wider">
+                          <th className="py-2.5 px-4 w-12 text-center">STT</th>
+                          <th className="py-2.5 px-4">Họ và tên</th>
+                          <th className="py-2.5 px-4">Địa chỉ / Bản thôn</th>
+                          <th className="py-2.5 px-4 w-24 text-center">Hành động</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {rosterStudents.map((student, sIdx) => {
+                          const isEditing = editingStudentId === student.id;
+                          return (
+                            <tr key={student.id} className="hover:bg-slate-50 transition-colors">
+                              <td className="py-2 px-4 text-center font-bold text-slate-400">{sIdx + 1}</td>
+                              <td className="py-2 px-4 font-bold text-slate-800">
+                                {isEditing ? (
+                                  <input
+                                    type="text"
+                                    value={editingStudentName}
+                                    onChange={(e) => setEditingStudentName(e.target.value)}
+                                    className="w-full px-2 py-1 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-blue-500"
+                                  />
+                                ) : (
+                                  student.full_name
+                                )}{' '}
+                                <span className="text-[9px] font-mono text-slate-400 ml-1">({student.id.split('_').pop()})</span>
+                              </td>
+                              <td className="py-2 px-4 text-slate-600">
+                                {isEditing ? (
+                                  <input
+                                    type="text"
+                                    value={editingStudentAddress}
+                                    onChange={(e) => setEditingStudentAddress(e.target.value)}
+                                    className="w-full px-2 py-1 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-blue-500"
+                                  />
+                                ) : (
+                                  student.address || <em className="text-slate-400">Không có</em>
+                                )}
+                              </td>
+                              <td className="py-2 px-4 text-center">
+                                {isEditing ? (
+                                  <div className="flex items-center justify-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={handleSaveEditStudent}
+                                      className="p-1 text-emerald-600 hover:bg-emerald-50 rounded-md"
+                                      title="Lưu"
+                                    >
+                                      <Check className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingStudentId(null)}
+                                      className="p-1 text-slate-400 hover:bg-slate-100 rounded-md"
+                                      title="Hủy"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleStartEditStudent(student)}
+                                      className="p-1 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-md"
+                                      title="Sửa học sinh"
+                                    >
+                                      <Edit2 className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteStudent(student.id, student.full_name)}
+                                      className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md"
+                                      title="Xóa học sinh"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end">
+              <button
+                type="button"
+                onClick={() => setShowRosterModal(false)}
+                className="px-5 h-10 rounded-xl text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 transition-colors cursor-pointer"
+              >
+                Đóng lại
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Modal Preschool Grade & Age Configuration */}
+      {isGradeConfigOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl w-full max-w-4xl overflow-hidden shadow-2xl border border-slate-200 flex flex-col max-h-[92vh]">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-slate-100 bg-gradient-to-r from-amber-50 to-orange-50 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center shadow-xs">
+                  <Settings2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+                    <span>CẤU HÌNH KHỐI LỚP & ĐỘ TUỔI TRƯỜNG MẦM NON</span>
+                    <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-200 text-amber-900">
+                      Chuẩn Bộ GD&ĐT
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    Quy định rõ danh mục khối Nhà trẻ, các khối Mẫu giáo và độ tuổi theo tháng / năm sinh cho từng khối
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsGradeConfigOpen(false)}
+                className="w-9 h-9 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-white flex items-center justify-center transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto flex-1 space-y-4">
+              {gradeConfigMsg && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-xl flex items-center gap-2 animate-in fade-in">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                  <span>{gradeConfigMsg}</span>
+                </div>
+              )}
+
+              <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-xs text-blue-900 space-y-1">
+                <div className="font-bold flex items-center gap-1.5 text-blue-950">
+                  <Sparkles className="w-4 h-4 text-blue-600" />
+                  <span>Quy định phân loại khối cấp Mầm Non:</span>
+                </div>
+                <ul className="list-disc list-inside space-y-0.5 pl-1 text-[11px] text-blue-800">
+                  <li><strong>Khối Nhà trẻ:</strong> Trẻ dưới 3 tuổi (từ 3 tháng đến 36 tháng, phổ biến nhóm 24 - 36 tháng).</li>
+                  <li><strong>Khối Mẫu giáo:</strong> Trẻ từ 3 tuổi đến 6 tuổi (Mẫu giáo Bé, Mẫu giáo Nhỡ, Mẫu giáo Lớn, Mẫu giáo Ghép hoặc các khối tùy biến).</li>
+                  <li>Hệ thống đã đồng bộ danh mục khối lớp ra các bộ lọc, bảng điểm danh và báo cáo ngày.</li>
+                </ul>
+              </div>
+
+              {/* Table of Grades */}
+              <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase text-[10px] tracking-wider">
+                      <th className="py-2.5 px-3 w-12 text-center">STT</th>
+                      <th className="py-2.5 px-3">Tên khối lớp</th>
+                      <th className="py-2.5 px-3 w-36">Phân loại</th>
+                      <th className="py-2.5 px-3 w-40">Quy định độ tuổi</th>
+                      <th className="py-2.5 px-3 w-36">Năm sinh áp dụng</th>
+                      <th className="py-2.5 px-3">Mô tả / Ghi chú</th>
+                      <th className="py-2.5 px-3 w-14 text-center">Xóa</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {gradeConfigsDraft.map((item, idx) => {
+                      const isNhaTre = item.category === 'NHA_TRE';
+                      return (
+                        <tr key={item.id || idx} className="hover:bg-slate-50/70">
+                          <td className="py-2 px-3 text-center font-bold text-slate-500">
+                            {idx + 1}
+                          </td>
+                          <td className="py-2 px-3">
+                            <input
+                              type="text"
+                              value={item.name}
+                              onChange={(e) => handleUpdateGradeDraft(idx, 'name', e.target.value)}
+                              className="w-full px-2.5 py-1.5 text-xs font-bold border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                            />
+                          </td>
+                          <td className="py-2 px-3">
+                            <select
+                              value={item.category}
+                              onChange={(e) => handleUpdateGradeDraft(idx, 'category', e.target.value)}
+                              className={`w-full px-2 py-1.5 text-xs font-bold rounded-lg border ${
+                                isNhaTre ? 'bg-amber-50 text-amber-900 border-amber-300' : 'bg-teal-50 text-teal-900 border-teal-300'
+                              }`}
+                            >
+                              <option value="NHA_TRE">Nhà trẻ (dưới 3T)</option>
+                              <option value="MAU_GIAO">Mẫu giáo (3-6T)</option>
+                            </select>
+                          </td>
+                          <td className="py-2 px-3">
+                            <input
+                              type="text"
+                              value={item.age_range}
+                              onChange={(e) => handleUpdateGradeDraft(idx, 'age_range', e.target.value)}
+                              placeholder="Ví dụ: 24 - 36 tháng"
+                              className="w-full px-2.5 py-1.5 text-xs font-semibold border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                            />
+                          </td>
+                          <td className="py-2 px-3">
+                            <input
+                              type="text"
+                              value={(item.birth_years || []).join(', ')}
+                              onChange={(e) => {
+                                const years = e.target.value
+                                  .split(/[,;\s]+/)
+                                  .map((y) => parseInt(y.trim(), 10))
+                                  .filter((y) => !isNaN(y));
+                                handleUpdateGradeDraft(idx, 'birth_years', years);
+                              }}
+                              placeholder="2024, 2025"
+                              className="w-full px-2.5 py-1.5 text-xs font-mono border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                            />
+                          </td>
+                          <td className="py-2 px-3">
+                            <input
+                              type="text"
+                              value={item.description}
+                              onChange={(e) => handleUpdateGradeDraft(idx, 'description', e.target.value)}
+                              className="w-full px-2.5 py-1.5 text-xs text-slate-600 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                            />
+                          </td>
+                          <td className="py-2 px-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteGradeConfig(idx)}
+                              className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              title="Xóa khối này"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Add grade button */}
+              <div className="flex items-center justify-between pt-1">
+                <button
+                  type="button"
+                  onClick={handleAddGradeConfig}
+                  className="px-3.5 py-2 rounded-xl text-xs font-bold text-amber-800 bg-amber-100 hover:bg-amber-200 flex items-center gap-1.5 transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Thêm khối lớp mới</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleResetGradeConfig}
+                  className="px-3 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 flex items-center gap-1.5 transition-colors"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Khôi phục chuẩn Bộ GD&ĐT</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsGradeConfigOpen(false)}
+                className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 bg-white hover:bg-slate-100 border border-slate-300 transition-colors"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveGradeConfig}
+                className="px-5 py-2.5 rounded-xl text-xs font-black text-white bg-amber-600 hover:bg-amber-700 flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+              >
+                <Save className="w-4 h-4" />
+                <span>LƯU CẤU HÌNH KHỐI LỚP</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
