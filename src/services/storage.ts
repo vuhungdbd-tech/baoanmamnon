@@ -271,6 +271,23 @@ export function ensureInitialized() {
   }
 }
 
+// Non-blocking background sync helper with timeout limit
+function syncToSupabase(task: () => Promise<any>) {
+  const supabase = getSupabaseClient();
+  if (!supabase || !isSupabaseConnected()) return;
+
+  Promise.resolve().then(async () => {
+    try {
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Supabase sync timeout')), 4000)
+      );
+      await Promise.race([task(), timeoutPromise]);
+    } catch (err) {
+      console.warn('Background Supabase sync notice:', err);
+    }
+  });
+}
+
 // ----------------------------------------------------
 // STORAGE SERVICE CRUD & FULL SUPABASE PERSISTENCE API
 // ----------------------------------------------------
@@ -680,32 +697,39 @@ export const StorageService = {
   // --- 5. Classes ---
   async getClasses(): Promise<ClassItem[]> {
     ensureInitialized();
-    let data: ClassItem[] | null = null;
-    const supabase = getSupabaseClient();
-    if (supabase && isSupabaseConnected()) {
-      try {
-        const { data: cloudData, error } = await supabase.from('classes').select('*').order('sort_order', { ascending: true });
-        if (!error && cloudData && cloudData.length > 0) {
-          localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(cloudData));
-          data = cloudData;
+    const raw = localStorage.getItem(STORAGE_KEYS.CLASSES);
+    let data: ClassItem[] = raw ? JSON.parse(raw) : [];
+
+    if (data.length === 0) {
+      const supabase = getSupabaseClient();
+      if (supabase && isSupabaseConnected()) {
+        try {
+          const { data: cloudData, error } = await supabase.from('classes').select('*').order('sort_order', { ascending: true });
+          if (!error && cloudData && cloudData.length > 0) {
+            localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(cloudData));
+            data = cloudData;
+          }
+        } catch (err) {
+          console.warn('Supabase fetch classes fallback to local', err);
         }
-      } catch (err) {
-        console.warn('Supabase fetch classes fallback to local', err);
       }
+    } else {
+      syncToSupabase(async () => {
+        const supabase = getSupabaseClient();
+        if (supabase) {
+          const { data: cloudData, error } = await supabase.from('classes').select('*').order('sort_order', { ascending: true });
+          if (!error && cloudData && cloudData.length > 0) {
+            localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(cloudData));
+          }
+        }
+      });
     }
 
-    if (!data) {
-      const raw = localStorage.getItem(STORAGE_KEYS.CLASSES);
-      data = raw ? JSON.parse(raw) : [];
-    }
-    
-    // Chuẩn hóa và tự động đồng bộ các khối đã cấu hình (loại bỏ khối 2, 3, 5 và khối 6, 7, 8, 9 cũ):
-    // Grade 1: Nhà trẻ (24 - 36 tháng)
-    // Grade 4: Mẫu giáo Lớn (5 - 6 tuổi)
+    // Only fix invalid/missing numeric grades
     let hasModifiedLegacyGrades = false;
     data = data.map((c) => {
       let g = Number(c.grade);
-      if (isNaN(g) || g === 2 || g === 3 || g === 5 || g >= 6 || g <= 0) {
+      if (isNaN(g) || g <= 0) {
         hasModifiedLegacyGrades = true;
         const nameLower = (c.class_name || '').toLowerCase();
         if (nameLower.startsWith('nt') || nameLower.includes('nhà trẻ') || nameLower.includes('nha tre')) {
@@ -747,14 +771,10 @@ export const StorageService = {
     });
     localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(list));
 
-    const supabase = getSupabaseClient();
-    if (supabase && isSupabaseConnected()) {
-      try {
-        await supabase.from('classes').upsert(classItem);
-      } catch (e) {
-        console.error('Supabase saveClass error:', e);
-      }
-    }
+    syncToSupabase(async () => {
+      const supabase = getSupabaseClient();
+      if (supabase) await supabase.from('classes').upsert(classItem);
+    });
 
     notifyRealtimeChange('classes');
   },
@@ -764,14 +784,10 @@ export const StorageService = {
     const filtered = list.filter((c) => c.id !== classId);
     localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(filtered));
 
-    const supabase = getSupabaseClient();
-    if (supabase && isSupabaseConnected()) {
-      try {
-        await supabase.from('classes').delete().eq('id', classId);
-      } catch (e) {
-        console.error('Supabase deleteClass error:', e);
-      }
-    }
+    syncToSupabase(async () => {
+      const supabase = getSupabaseClient();
+      if (supabase) await supabase.from('classes').delete().eq('id', classId);
+    });
 
     notifyRealtimeChange('classes');
   },
@@ -783,14 +799,10 @@ export const StorageService = {
       target.is_locked = isLocked;
       localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(list));
 
-      const supabase = getSupabaseClient();
-      if (supabase && isSupabaseConnected()) {
-        try {
-          await supabase.from('classes').update({ is_locked: isLocked }).eq('id', classId);
-        } catch (e) {
-          console.error('Supabase toggleClassLock error:', e);
-        }
-      }
+      syncToSupabase(async () => {
+        const supabase = getSupabaseClient();
+        if (supabase) await supabase.from('classes').update({ is_locked: isLocked }).eq('id', classId);
+      });
 
       notifyRealtimeChange('classes');
     }
@@ -799,25 +811,34 @@ export const StorageService = {
   // --- 5.5. Students ---
   async getStudents(): Promise<import('../types').Student[]> {
     ensureInitialized();
-    let data: import('../types').Student[] | null = null;
-    const supabase = getSupabaseClient();
-    if (supabase && isSupabaseConnected()) {
-      try {
-        const { data: cloudData, error } = await supabase.from('students').select('*').order('full_name', { ascending: true });
-        if (!error && cloudData && cloudData.length > 0) {
-          localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(cloudData));
-          data = cloudData;
+    const raw = localStorage.getItem(STORAGE_KEYS.STUDENTS);
+    let data: import('../types').Student[] = raw ? JSON.parse(raw) : [];
+
+    if (data.length === 0) {
+      const supabase = getSupabaseClient();
+      if (supabase && isSupabaseConnected()) {
+        try {
+          const { data: cloudData, error } = await supabase.from('students').select('*').order('full_name', { ascending: true });
+          if (!error && cloudData && cloudData.length > 0) {
+            localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(cloudData));
+            data = cloudData;
+          }
+        } catch (err) {
+          console.warn('Supabase fetch students fallback to local', err);
         }
-      } catch (err) {
-        console.warn('Supabase fetch students fallback to local', err);
       }
+    } else {
+      syncToSupabase(async () => {
+        const supabase = getSupabaseClient();
+        if (supabase) {
+          const { data: cloudData, error } = await supabase.from('students').select('*').order('full_name', { ascending: true });
+          if (!error && cloudData && cloudData.length > 0) {
+            localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(cloudData));
+          }
+        }
+      });
     }
 
-    if (!data) {
-      const raw = localStorage.getItem(STORAGE_KEYS.STUDENTS);
-      data = raw ? JSON.parse(raw) : [];
-    }
-    
     const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
     return data.sort((a, b) => collator.compare(a.full_name, b.full_name));
   },
@@ -832,14 +853,10 @@ export const StorageService = {
     list.sort((a, b) => collator.compare(a.full_name, b.full_name));
     localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(list));
 
-    const supabase = getSupabaseClient();
-    if (supabase && isSupabaseConnected()) {
-      try {
-        await supabase.from('students').upsert(student);
-      } catch (e) {
-        console.error('Supabase saveStudent error:', e);
-      }
-    }
+    syncToSupabase(async () => {
+      const supabase = getSupabaseClient();
+      if (supabase) await supabase.from('students').upsert(student);
+    });
 
     notifyRealtimeChange('students');
   },
@@ -849,14 +866,10 @@ export const StorageService = {
     const filtered = list.filter((s) => s.id !== studentId);
     localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(filtered));
 
-    const supabase = getSupabaseClient();
-    if (supabase && isSupabaseConnected()) {
-      try {
-        await supabase.from('students').delete().eq('id', studentId);
-      } catch (e) {
-        console.error('Supabase deleteStudent error:', e);
-      }
-    }
+    syncToSupabase(async () => {
+      const supabase = getSupabaseClient();
+      if (supabase) await supabase.from('students').delete().eq('id', studentId);
+    });
 
     notifyRealtimeChange('students');
   },
@@ -878,35 +891,51 @@ export const StorageService = {
     updated.sort((a, b) => collator.compare(a.full_name, b.full_name));
     localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(updated));
 
-    const supabase = getSupabaseClient();
-    if (supabase && isSupabaseConnected()) {
-      try {
-        await supabase.from('students').upsert(students);
-      } catch (e) {
-        console.error('Supabase saveStudents bulk error:', e);
-      }
-    }
+    syncToSupabase(async () => {
+      const supabase = getSupabaseClient();
+      if (supabase) await supabase.from('students').upsert(students);
+    });
+
     notifyRealtimeChange('students');
   },
 
   // --- 6. Profiles (Users) ---
   async getProfiles(): Promise<Profile[]> {
     ensureInitialized();
-    const supabase = getSupabaseClient();
-    if (supabase && isSupabaseConnected()) {
-      try {
-        const { data, error } = await supabase.from('profiles').select('*').order('created_at', { ascending: true });
-        if (!error && data && data.length > 0) {
-          localStorage.setItem(STORAGE_KEYS.PROFILES, JSON.stringify(data));
-          return data;
-        }
-      } catch (err) {
-        console.warn('Supabase fetch profiles fallback to local', err);
-      }
-    }
-
     const raw = localStorage.getItem(STORAGE_KEYS.PROFILES);
     let list: Profile[] = raw ? JSON.parse(raw) : getInitialData().profiles;
+
+    if (!raw) {
+      const supabase = getSupabaseClient();
+      if (supabase && isSupabaseConnected()) {
+        try {
+          const { data, error } = await supabase.from('profiles').select('*').order('created_at', { ascending: true });
+          if (!error && data && data.length > 0) {
+            localStorage.setItem(STORAGE_KEYS.PROFILES, JSON.stringify(data));
+            list = data;
+          }
+        } catch (err) {
+          console.warn('Supabase fetch profiles fallback to local', err);
+        }
+      }
+    } else {
+      syncToSupabase(async () => {
+        const supabase = getSupabaseClient();
+        if (supabase) {
+          const { data, error } = await supabase.from('profiles').select('*').order('created_at', { ascending: true });
+          if (!error && data && data.length > 0) {
+            const map = new Map<string, Profile>();
+            data.forEach((p) => map.set(p.id, p));
+            list.forEach((p) => {
+              if (!map.has(p.id)) map.set(p.id, p);
+            });
+            const merged = Array.from(map.values());
+            localStorage.setItem(STORAGE_KEYS.PROFILES, JSON.stringify(merged));
+          }
+        }
+      });
+    }
+
     let modified = false;
 
     // Load classes and preschool grades to infer teaching scope if missing
@@ -943,14 +972,10 @@ export const StorageService = {
     else list.push(profile);
     localStorage.setItem(STORAGE_KEYS.PROFILES, JSON.stringify(list));
 
-    const supabase = getSupabaseClient();
-    if (supabase && isSupabaseConnected()) {
-      try {
-        await supabase.from('profiles').upsert(profile);
-      } catch (e) {
-        console.error('Supabase saveProfile error:', e);
-      }
-    }
+    syncToSupabase(async () => {
+      const supabase = getSupabaseClient();
+      if (supabase) await supabase.from('profiles').upsert(profile);
+    });
 
     notifyRealtimeChange('profiles');
   },
@@ -960,14 +985,10 @@ export const StorageService = {
     const filtered = list.filter((p) => p.id !== profileId);
     localStorage.setItem(STORAGE_KEYS.PROFILES, JSON.stringify(filtered));
 
-    const supabase = getSupabaseClient();
-    if (supabase && isSupabaseConnected()) {
-      try {
-        await supabase.from('profiles').delete().eq('id', profileId);
-      } catch (e) {
-        console.error('Supabase deleteProfile error:', e);
-      }
-    }
+    syncToSupabase(async () => {
+      const supabase = getSupabaseClient();
+      if (supabase) await supabase.from('profiles').delete().eq('id', profileId);
+    });
 
     notifyRealtimeChange('profiles');
   },
