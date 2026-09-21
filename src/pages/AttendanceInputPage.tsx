@@ -554,33 +554,51 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
             });
           }
 
-          const isNT = isNhaTreClass(selectedClass?.class_name, selectedClass?.grade);
-          const mainVal = values?.find((v) => v.indicator_group_id === enabledIndicators[0]?.id);
-          const presentCount = mainVal?.present_count ?? ((raw.present_nha_tre || 0) + (raw.present_mau_giao || 0));
+          const mainId = enabledIndicators[0]?.id;
+          const curMain = mainId ? initialMap[mainId] : null;
+          const mainTotal = curMain ? Number(curMain.total) || 0 : 0;
+          const mainPresent = curMain ? Number(curMain.present) || 0 : 0;
+          const mainAbsent = curMain ? Number(curMain.absent) || 0 : 0;
 
-          let bNT = Number(raw.boarding_nha_tre) || 0;
-          let bMG = Number(raw.boarding_mau_giao) || 0;
-          let bTotal = Number(raw.boarding_count) || 0;
+          // Reconcile between main class totals and age_stats:
+          const totalFromStats = Object.values(mergedStats).reduce((sum, s) => sum + (s.total || 0), 0);
+          const defaultYear = getDefaultCohortYear(selectedClass?.class_name, selectedClass?.grade);
 
-          if (isNT) {
-            if (bNT <= 0 && presentCount > 0) bNT = presentCount;
-            if (bTotal <= 0 && presentCount > 0) bTotal = presentCount;
-          } else {
-            if (bMG <= 0 && presentCount > 0) bMG = presentCount;
-            if (bTotal <= 0 && presentCount > 0) bTotal = presentCount;
+          if (totalFromStats === 0 && mainTotal > 0) {
+            // Distribute main total into age stats
+            const syncedStats = syncAgeStatsFromTotals(mergedStats, mainTotal, mainPresent, mainAbsent, defaultYear);
+            Object.assign(mergedStats, syncedStats);
+          } else if (totalFromStats > 0 && mainTotal === 0 && mainId) {
+            // Reconcile main indicator from age stats
+            const statsAgg = computeTotalsFromAgeStats(mergedStats);
+            initialMap[mainId] = {
+              total: statsAgg.grandTotal,
+              present: statsAgg.grandPresent,
+              absent: statsAgg.grandAbsent,
+            };
+            setFormValues(initialMap);
           }
+
+          const agg = computeTotalsFromAgeStats(mergedStats);
 
           setPreschoolData({
             ...raw,
-            boarding_nha_tre: bNT,
-            boarding_mau_giao: bMG,
-            boarding_count: bTotal > 0 ? bTotal : presentCount,
-            lunch_count: raw.lunch_count && raw.lunch_count > 0 ? raw.lunch_count : (bTotal > 0 ? bTotal : presentCount),
-            snack_count: raw.snack_count && raw.snack_count > 0 ? raw.snack_count : (bTotal > 0 ? bTotal : presentCount),
-            lunch_nha_tre: raw.lunch_nha_tre && raw.lunch_nha_tre > 0 ? raw.lunch_nha_tre : bNT,
-            snack_nha_tre: raw.snack_nha_tre && raw.snack_nha_tre > 0 ? raw.snack_nha_tre : bNT,
-            lunch_mau_giao: raw.lunch_mau_giao && raw.lunch_mau_giao > 0 ? raw.lunch_mau_giao : bMG,
-            snack_mau_giao: raw.snack_mau_giao && raw.snack_mau_giao > 0 ? raw.snack_mau_giao : bMG,
+            total_nha_tre: agg.totNT,
+            total_mau_giao: agg.totMG,
+            present_nha_tre: agg.presNT,
+            present_mau_giao: agg.presMG,
+            absent_nha_tre: agg.absNT,
+            absent_mau_giao: agg.absMG,
+            boarding_nha_tre: agg.boardNT,
+            boarding_mau_giao: agg.boardMG,
+            lunch_nha_tre: agg.boardNT,
+            lunch_mau_giao: agg.boardMG,
+            snack_nha_tre: agg.boardNT,
+            snack_mau_giao: agg.boardMG,
+            boarding_count: agg.grandBoarding,
+            lunch_count: agg.grandBoarding,
+            snack_count: agg.grandBoarding,
+            canceled_count: agg.grandAbsent,
             age_stats: mergedStats,
           });
         } else {
@@ -690,6 +708,175 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
     });
   };
 
+  /**
+   * Tính toán tổng hợp sĩ số, chuyên cần và bán trú từ danh sách nhóm tuổi (age_stats)
+   */
+  const computeTotalsFromAgeStats = (stats: Record<string, AgeGroupStat>) => {
+    const ntYears = nhaTreAgeGroupItems.map((item) => item.year);
+
+    let totNT = 0, presNT = 0, absNT = 0, boardNT = 0;
+    let totMG = 0, presMG = 0, absMG = 0, boardMG = 0;
+
+    Object.entries(stats).forEach(([y, st]) => {
+      const isNT = ntYears.includes(y) || Number(y) >= startYear - 2;
+      const t = Number(st?.total) || 0;
+      const p = Number(st?.present) || 0;
+      const a = Number(st?.absent) || 0;
+      const b = Number(st?.boarding) || 0;
+      if (isNT) {
+        totNT += t;
+        presNT += p;
+        absNT += a;
+        boardNT += b;
+      } else {
+        totMG += t;
+        presMG += p;
+        absMG += a;
+        boardMG += b;
+      }
+    });
+
+    return {
+      totNT, presNT, absNT, boardNT,
+      totMG, presMG, absMG, boardMG,
+      grandTotal: totNT + totMG,
+      grandPresent: presNT + presMG,
+      grandAbsent: absNT + absMG,
+      grandBoarding: boardNT + boardMG,
+    };
+  };
+
+  /**
+   * Đồng bộ phân bổ chuyên cần từ số tổng (Total, Present, Absent) vào từng nhóm tuổi (age_stats).
+   * Đảm bảo:
+   * 1. Tổng sĩ số của các nhóm tuổi luôn khớp targetTotal.
+   * 2. Tổng có mặt của các nhóm tuổi luôn khớp targetPresent.
+   * 3. Tổng vắng của các nhóm tuổi luôn khớp targetAbsent.
+   * 4. Không bao giờ gán đè targetPresent lên một nhóm duy nhất khi lớp có nhiều năm sinh (ngăn chặn nhảy số linh tinh).
+   */
+  const syncAgeStatsFromTotals = (
+    stats: Record<string, AgeGroupStat>,
+    targetTotal: number,
+    targetPresent: number,
+    targetAbsent: number,
+    defaultYear: string
+  ): Record<string, AgeGroupStat> => {
+    const newStats: Record<string, AgeGroupStat> = {};
+    Object.keys(stats).forEach((y) => {
+      newStats[y] = { ...stats[y] };
+    });
+
+    const activeYears = Object.keys(newStats).filter((y) => (Number(newStats[y]?.total) || 0) > 0);
+
+    // TH1: Chưa có nhóm tuổi nào có sĩ số -> Gán vào năm sinh mặc định
+    if (activeYears.length === 0) {
+      const yr = defaultYear && newStats[defaultYear] ? defaultYear : Object.keys(newStats)[0];
+      if (yr) {
+        newStats[yr] = {
+          total: targetTotal,
+          present: targetPresent,
+          absent: targetAbsent,
+          boarding: targetPresent,
+        };
+      }
+      return newStats;
+    }
+
+    // TH2: Lớp đơn chỉ có đúng 1 năm sinh
+    if (activeYears.length === 1) {
+      const yr = activeYears[0];
+      newStats[yr] = {
+        total: targetTotal > 0 ? targetTotal : (newStats[yr].total || targetTotal),
+        present: targetPresent,
+        absent: targetAbsent,
+        boarding: targetPresent,
+      };
+      return newStats;
+    }
+
+    // TH3: Lớp ghép nhiều năm sinh (VD: trẻ sinh 2024 và 2026)
+    // 3.1: Nếu targetTotal thay đổi khác tổng hiện tại của các nhóm tuổi, điều chỉnh sĩ số nhóm chính
+    const currentSumTotal = activeYears.reduce((sum, y) => sum + (Number(newStats[y]?.total) || 0), 0);
+    if (targetTotal > 0 && targetTotal !== currentSumTotal) {
+      const primaryYear = activeYears.includes(defaultYear) ? defaultYear : activeYears[0];
+      const diff = targetTotal - currentSumTotal;
+      const newCohortTotal = Math.max(0, (Number(newStats[primaryYear]?.total) || 0) + diff);
+      newStats[primaryYear].total = newCohortTotal;
+    }
+
+    // 3.2: Phân bổ số trẻ vắng (targetAbsent) vào các năm sinh
+    // Ưu tiên trừ vắng ở nhóm tuổi chính/lớn nhất trước
+    const sortedYears = [...activeYears].sort((a, b) => {
+      if (a === defaultYear) return -1;
+      if (b === defaultYear) return 1;
+      return (Number(newStats[b]?.total) || 0) - (Number(newStats[a]?.total) || 0);
+    });
+
+    let remainingAbsent = Math.max(0, targetAbsent);
+    sortedYears.forEach((y) => {
+      const cohortTotal = Number(newStats[y]?.total) || 0;
+      const cohortAbsent = Math.min(cohortTotal, remainingAbsent);
+      const cohortPresent = Math.max(0, cohortTotal - cohortAbsent);
+      remainingAbsent -= cohortAbsent;
+
+      newStats[y] = {
+        ...newStats[y],
+        total: cohortTotal,
+        present: cohortPresent,
+        absent: cohortAbsent,
+        boarding: cohortPresent,
+      };
+    });
+
+    return newStats;
+  };
+
+  /**
+   * Đồng bộ tức thời từ số lượng học sinh chính của lớp (Sĩ số, Có mặt, Vắng)
+   * sang toàn bộ cấu trúc Preschool Data, Age Stats (theo từng độ tuổi) và Suất ăn bán trú.
+   */
+  const syncMainAttendanceToPreschool = (total: number, present: number, absent: number) => {
+    setPreschoolData((prevPs) => {
+      const defaultYear = getDefaultCohortYear(selectedClass?.class_name, selectedClass?.grade);
+      const updatedAgeStats = syncAgeStatsFromTotals(
+        prevPs.age_stats || createDefaultAgeStats(),
+        total,
+        present,
+        absent,
+        defaultYear
+      );
+
+      const agg = computeTotalsFromAgeStats(updatedAgeStats);
+      const female = prevPs.female_count || 0;
+      const ethnic = prevPs.ethnic_count || 0;
+
+      return {
+        ...prevPs,
+        age_stats: updatedAgeStats,
+        total_nha_tre: agg.totNT,
+        total_mau_giao: agg.totMG,
+        present_nha_tre: agg.presNT,
+        present_mau_giao: agg.presMG,
+        absent_nha_tre: agg.absNT,
+        absent_mau_giao: agg.absMG,
+        boarding_nha_tre: agg.boardNT,
+        boarding_mau_giao: agg.boardMG,
+        lunch_nha_tre: agg.boardNT,
+        lunch_mau_giao: agg.boardMG,
+        snack_nha_tre: agg.boardNT,
+        snack_mau_giao: agg.boardMG,
+        boarding_count: agg.grandBoarding,
+        lunch_count: agg.grandBoarding,
+        snack_count: agg.grandBoarding,
+        canceled_count: agg.grandAbsent,
+        absent_excused: absent,
+        absent_unexcused: 0,
+        present_female_count: Math.min(female, present),
+        present_ethnic_count: Math.min(ethnic, present),
+      };
+    });
+  };
+
   // Handle field change with automatic calculation
   const handleFieldChange = (
     groupId: string,
@@ -731,57 +918,15 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
       [groupId]: next,
     }));
 
-    // Tự động lập danh sách học sinh vắng nếu là nhóm chỉ tiêu chính (Sĩ số trường / lớp)
-    if (groupId === enabledIndicators[0]?.id && typeof next.absent === 'number') {
-      syncAbsentListToCount(next.absent);
+    // Tự động đồng bộ sang preschoolData và danh sách học sinh vắng nếu là chỉ tiêu chính
+    if (groupId === enabledIndicators[0]?.id) {
+      if (absent === 0) {
+        setAbsentStudents([]);
+      } else {
+        syncAbsentListToCount(absent);
+      }
 
-      // ĐỒNG BỘ MẦM NON: SỐ HS CÓ MẶT ĐỒNG BỘ VỚI XUẤT ĂN BÁN TRÚ
-      setPreschoolData((prevPs) => {
-        const stats = { ...(prevPs.age_stats || createDefaultAgeStats()) };
-        const activeYears = Object.keys(stats).filter((yr) => (stats[yr].total || 0) > 0);
-        let targetYear = activeYears.length === 1 ? activeYears[0] : '';
-        if (!targetYear) {
-          targetYear = getDefaultCohortYear(selectedClass?.class_name, selectedClass?.grade);
-        }
-
-        if (targetYear && stats[targetYear]) {
-          stats[targetYear] = {
-            total: total > 0 ? total : (stats[targetYear].total || total),
-            present: present,
-            absent: absent,
-            boarding: present, // Suất ăn = Số có mặt
-          };
-        }
-
-        const isNTClass = isNhaTreClass(selectedClass?.class_name, selectedClass?.grade);
-        const bNT = isNTClass ? present : (prevPs.boarding_nha_tre || 0);
-        const bMG = !isNTClass ? present : (prevPs.boarding_mau_giao || 0);
-
-        return {
-          ...prevPs,
-          age_stats: stats,
-          total_nha_tre: isNTClass ? (total > 0 ? total : prevPs.total_nha_tre) : prevPs.total_nha_tre,
-          total_mau_giao: !isNTClass ? (total > 0 ? total : prevPs.total_mau_giao) : prevPs.total_mau_giao,
-          present_nha_tre: isNTClass ? present : prevPs.present_nha_tre,
-          present_mau_giao: !isNTClass ? present : prevPs.present_mau_giao,
-          absent_nha_tre: isNTClass ? absent : prevPs.absent_nha_tre,
-          absent_mau_giao: !isNTClass ? absent : prevPs.absent_mau_giao,
-          boarding_nha_tre: bNT,
-          boarding_mau_giao: bMG,
-          lunch_nha_tre: bNT,
-          lunch_mau_giao: bMG,
-          snack_nha_tre: bNT,
-          snack_mau_giao: bMG,
-          boarding_count: present,
-          lunch_count: present,
-          snack_count: present,
-          canceled_count: absent,
-          present_female_count: Math.min(prevPs.female_count || 0, present),
-          present_ethnic_count: Math.min(prevPs.ethnic_count || 0, present),
-          absent_excused: absent,
-          absent_unexcused: 0,
-        };
-      });
+      syncMainAttendanceToPreschool(total, present, absent);
     }
   };
 
@@ -816,61 +961,14 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
     }));
 
     // Cập nhật thống kê mầm non đồng bộ 100% (Số có mặt = Suất ăn)
-    setPreschoolData((prev) => {
-      const female = prev.female_count || 0;
-      const ethnic = prev.ethnic_count || 0;
-
-      const stats = { ...(prev.age_stats || createDefaultAgeStats()) };
-      const activeYears = Object.keys(stats).filter((yr) => (stats[yr].total || 0) > 0);
-      let targetYear = activeYears.length === 1 ? activeYears[0] : '';
-      if (!targetYear) {
-        targetYear = getDefaultCohortYear(selectedClass?.class_name, selectedClass?.grade);
-      }
-
-      if (targetYear && stats[targetYear]) {
-        stats[targetYear] = {
-          total: total > 0 ? total : (stats[targetYear].total || total),
-          present: actualPresent,
-          absent: actualAbsent,
-          boarding: actualPresent,
-        };
-      }
-
-      const isNTClass = isNhaTreClass(selectedClass?.class_name, selectedClass?.grade);
-      const bNT = isNTClass ? actualPresent : (prev.boarding_nha_tre || 0);
-      const bMG = !isNTClass ? actualPresent : (prev.boarding_mau_giao || 0);
-
-      return {
-        ...prev,
-        age_stats: stats,
-        absent_excused: actualAbsent,
-        absent_unexcused: 0,
-        present_female_count: Math.min(female, actualPresent),
-        present_ethnic_count: Math.min(ethnic, actualPresent),
-        present_nha_tre: isNTClass ? actualPresent : prev.present_nha_tre,
-        present_mau_giao: !isNTClass ? actualPresent : prev.present_mau_giao,
-        absent_nha_tre: isNTClass ? actualAbsent : prev.absent_nha_tre,
-        absent_mau_giao: !isNTClass ? actualAbsent : prev.absent_mau_giao,
-        boarding_nha_tre: bNT,
-        boarding_mau_giao: bMG,
-        lunch_nha_tre: bNT,
-        lunch_mau_giao: bMG,
-        snack_nha_tre: bNT,
-        snack_mau_giao: bMG,
-        boarding_count: actualPresent,
-        lunch_count: actualPresent,
-        snack_count: actualPresent,
-        canceled_count: actualAbsent,
-      };
-    });
-
-    // Tự động lập danh sách học sinh vắng cho nhóm chỉ tiêu chính
     if (groupId === enabledIndicators[0]?.id) {
       if (actualAbsent === 0) {
         setAbsentStudents([]);
       } else {
         syncAbsentListToCount(actualAbsent);
       }
+
+      syncMainAttendanceToPreschool(total, actualPresent, actualAbsent);
     }
   };
 
@@ -905,8 +1003,6 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
     setPreschoolData((prev) => {
       const stats = { ...(prev.age_stats || createDefaultAgeStats()) };
       const hasAnyAgeTotal = Object.values(stats as Record<string, AgeGroupStat>).some((s) => (s?.total || 0) > 0);
-
-      const isNTClass = isNhaTreClass(selectedClass?.class_name, selectedClass?.grade);
       const defaultYear = getDefaultCohortYear(selectedClass?.class_name, selectedClass?.grade);
 
       if (!hasAnyAgeTotal && defaultYear && stats[defaultYear]) {
@@ -918,7 +1014,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
         };
       } else {
         Object.keys(stats).forEach((yr) => {
-          const t = stats[yr].total || 0;
+          const t = stats[yr]?.total || 0;
           stats[yr] = {
             ...stats[yr],
             present: t,
@@ -928,35 +1024,33 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
         });
       }
 
-      let totNT = prev.total_nha_tre || 0;
-      let totMG = prev.total_mau_giao || 0;
-
-      if (isNTClass && totNT === 0) totNT = mainTotal;
-      if (!isNTClass && totMG === 0) totMG = mainTotal;
+      const agg = computeTotalsFromAgeStats(stats);
+      const female = prev.female_count || 0;
+      const ethnic = prev.ethnic_count || 0;
 
       return {
         ...prev,
-        present_female_count: prev.female_count || 0,
-        present_ethnic_count: prev.ethnic_count || 0,
+        age_stats: stats,
+        present_female_count: female,
+        present_ethnic_count: ethnic,
         absent_excused: 0,
         absent_unexcused: 0,
-        total_nha_tre: totNT,
-        total_mau_giao: totMG,
-        present_nha_tre: totNT,
+        total_nha_tre: agg.totNT,
+        total_mau_giao: agg.totMG,
+        present_nha_tre: agg.presNT,
+        present_mau_giao: agg.presMG,
         absent_nha_tre: 0,
-        present_mau_giao: totMG,
         absent_mau_giao: 0,
-        boarding_nha_tre: totNT,
-        boarding_mau_giao: totMG,
-        lunch_nha_tre: totNT,
-        lunch_mau_giao: totMG,
-        snack_nha_tre: totNT,
-        snack_mau_giao: totMG,
-        boarding_count: mainTotal,
-        lunch_count: mainTotal,
-        snack_count: mainTotal,
+        boarding_nha_tre: agg.boardNT,
+        boarding_mau_giao: agg.boardMG,
+        lunch_nha_tre: agg.boardNT,
+        lunch_mau_giao: agg.boardMG,
+        snack_nha_tre: agg.boardNT,
+        snack_mau_giao: agg.boardMG,
+        boarding_count: agg.grandBoarding,
+        lunch_count: agg.grandBoarding,
+        snack_count: agg.grandBoarding,
         canceled_count: 0,
-        age_stats: stats,
       };
     });
 
@@ -966,7 +1060,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
     setTimeout(() => setQuickFillNotice(''), 3500);
   };
 
-  // Cập nhật thống kê theo độ tuổi (Năm sinh 2025, 2024, 2023, 2022, 2021...)
+  // Cập nhật thống kê theo độ tuổi (Năm sinh 2026, 2025, 2024, 2023, 2022, 2021...)
   // ĐỒNG BỘ 100% GIỮA SỐ TRẺ CÓ MẶT VÀ XUẤT ĂN BÁN TRÚ
   const handleUpdateAgeStat = (
     year: string,
@@ -974,140 +1068,115 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
     val: number
   ) => {
     isFormDirtyRef.current = true;
-    let computedGrandTotal = 0;
-    let computedGrandPresent = 0;
-    let computedGrandAbsent = 0;
 
-    setPreschoolData((prev) => {
-      const stats = { ...(prev.age_stats || createDefaultAgeStats()) };
-      const cur = stats[year] || { total: 0, present: 0, absent: 0, boarding: 0 };
+    // Lấy stats hiện tại một cách an toàn
+    const currentStats = preschoolData.age_stats || createDefaultAgeStats();
+    const cur = currentStats[year] || { total: 0, present: 0, absent: 0, boarding: 0 };
 
-      let newTotal = field === 'total' ? Math.max(0, val) : cur.total;
-      let newPresent = cur.present;
-      let newAbsent = cur.absent;
-      let newBoarding = cur.boarding;
+    let newTotal = field === 'total' ? Math.max(0, val) : (cur.total || 0);
+    let newPresent = cur.present || 0;
+    let newAbsent = cur.absent || 0;
+    let newBoarding = cur.boarding || 0;
 
-      if (field === 'total') {
-        newTotal = Math.max(0, val);
-        if (newPresent > newTotal || (cur.total === 0 && newTotal > 0) || (cur.present === 0 && cur.absent === 0)) {
-          newPresent = newTotal;
-          newAbsent = 0;
-          newBoarding = newTotal;
-        } else {
-          newAbsent = Math.max(0, newTotal - newPresent);
-          newBoarding = newPresent;
-        }
-      } else if (field === 'present') {
-        newPresent = Math.min(newTotal > 0 ? newTotal : val, Math.max(0, val));
-        if (newTotal === 0 && val > 0) {
-          newTotal = val;
-        }
+    if (field === 'total') {
+      newTotal = Math.max(0, val);
+      if (newPresent > newTotal || (cur.total === 0 && newTotal > 0) || (cur.present === 0 && cur.absent === 0)) {
+        newPresent = newTotal;
+        newAbsent = 0;
+        newBoarding = newTotal;
+      } else {
         newAbsent = Math.max(0, newTotal - newPresent);
-        // ĐỒNG BỘ: SỐ TRẺ CÓ MẶT ĐI HỌC = SUẤT ĂN BÁN TRÚ
         newBoarding = newPresent;
-      } else if (field === 'absent') {
-        newAbsent = Math.min(newTotal, Math.max(0, val));
-        newPresent = Math.max(0, newTotal - newAbsent);
-        // ĐỒNG BỘ: SỐ TRẺ CÓ MẶT ĐI HỌC = SUẤT ĂN BÁN TRÚ
-        newBoarding = newPresent;
-      } else if (field === 'boarding') {
-        newBoarding = Math.max(0, val);
-        // ĐỒNG BỘ 2 CHIỀU: NẾU SỬA SUẤT ĂN THÌ SỐ TRẺ CÓ MẶT TỰ ĐỘNG ĐỒNG BỘ VỚI SUẤT ĂN
-        newPresent = newBoarding;
-        if (newTotal < newPresent) {
-          newTotal = newPresent;
-        }
-        newAbsent = Math.max(0, newTotal - newPresent);
       }
+    } else if (field === 'present') {
+      newPresent = Math.max(0, val);
+      if (newTotal === 0 && val > 0) {
+        newTotal = val;
+      } else if (val > newTotal) {
+        newTotal = val;
+      }
+      newAbsent = Math.max(0, newTotal - newPresent);
+      newBoarding = newPresent;
+    } else if (field === 'absent') {
+      newAbsent = Math.max(0, val);
+      if (newAbsent > newTotal) {
+        newTotal = newAbsent + newPresent;
+      }
+      newPresent = Math.max(0, newTotal - newAbsent);
+      newBoarding = newPresent;
+    } else if (field === 'boarding') {
+      newBoarding = Math.max(0, val);
+      newPresent = newBoarding;
+      if (newTotal < newPresent) {
+        newTotal = newPresent;
+      }
+      newAbsent = Math.max(0, newTotal - newPresent);
+    }
 
-      stats[year] = {
+    const updatedStats: Record<string, AgeGroupStat> = {
+      ...currentStats,
+      [year]: {
         total: newTotal,
         present: newPresent,
         absent: newAbsent,
         boarding: newBoarding,
-      };
+      },
+    };
 
-      // Tách danh sách năm sinh theo khối Nhà trẻ & Mẫu giáo
-      const ntYears = nhaTreAgeGroupItems.map((item) => item.year);
-      const mgYears = mauGiaoAgeGroupItems.map((item) => item.year);
+    // Tính toán tổng hợp tức thời (synchronous) từ tất cả các nhóm tuổi
+    const agg = computeTotalsFromAgeStats(updatedStats);
 
-      let totNT = 0;
-      let presNT = 0;
-      let absNT = 0;
-      let boardNT = 0;
-      ntYears.forEach((y) => {
-        if (stats[y]) {
-          totNT += Number(stats[y].total) || 0;
-          presNT += Number(stats[y].present) || 0;
-          absNT += Number(stats[y].absent) || 0;
-          boardNT += Number(stats[y].boarding) || 0;
-        }
-      });
-
-      let totMG = 0;
-      let presMG = 0;
-      let absMG = 0;
-      let boardMG = 0;
-      mgYears.forEach((y) => {
-        if (stats[y]) {
-          totMG += Number(stats[y].total) || 0;
-          presMG += Number(stats[y].present) || 0;
-          absMG += Number(stats[y].absent) || 0;
-          boardMG += Number(stats[y].boarding) || 0;
-        }
-      });
-
-      const grandTotal = totNT + totMG;
-      const grandPresent = presNT + presMG;
-      const grandAbsent = absNT + absMG;
-      const grandBoarding = boardNT + boardMG;
-
-      computedGrandTotal = grandTotal;
-      computedGrandPresent = grandPresent;
-      computedGrandAbsent = grandAbsent;
-
-      return {
-        ...prev,
-        age_stats: stats,
-        total_nha_tre: totNT,
-        total_mau_giao: totMG,
-        present_nha_tre: presNT,
-        present_mau_giao: presMG,
-        absent_nha_tre: absNT,
-        absent_mau_giao: absMG,
-        boarding_nha_tre: boardNT,
-        boarding_mau_giao: boardMG,
-        boarding_count: grandBoarding,
-        lunch_count: grandBoarding,
-        lunch_nha_tre: boardNT,
-        lunch_mau_giao: boardMG,
-        snack_count: grandBoarding,
-        snack_nha_tre: boardNT,
-        snack_mau_giao: boardMG,
-        canceled_count: grandAbsent,
-        absent_excused: grandAbsent,
-        absent_unexcused: 0,
-        present_female_count: Math.min(prev.female_count || 0, grandPresent),
-        present_ethnic_count: Math.min(prev.ethnic_count || 0, grandPresent),
-      };
-    });
-
-    // Tự động đồng bộ sang ô nhập chung ngoài updater
-    if (computedGrandTotal > 0 && enabledIndicators[0]) {
+    // 1. Cập nhật tức thời sang formValues (Tổng số, Có mặt, Vắng của lớp)
+    if (enabledIndicators[0]) {
       const mainId = enabledIndicators[0].id;
       setFormValues((prevMap) => ({
         ...prevMap,
         [mainId]: {
-          total: computedGrandTotal,
-          present: computedGrandPresent,
-          absent: computedGrandAbsent,
+          total: agg.grandTotal,
+          present: agg.grandPresent,
+          absent: agg.grandAbsent,
         },
       }));
     }
 
-    // Tự động đồng bộ danh sách học sinh vắng nếu có
+    // 2. Cập nhật preschoolData
+    setPreschoolData((prev) => {
+      const female = prev.female_count || 0;
+      const ethnic = prev.ethnic_count || 0;
+
+      return {
+        ...prev,
+        age_stats: updatedStats,
+        total_nha_tre: agg.totNT,
+        total_mau_giao: agg.totMG,
+        present_nha_tre: agg.presNT,
+        present_mau_giao: agg.presMG,
+        absent_nha_tre: agg.absNT,
+        absent_mau_giao: agg.absMG,
+        boarding_nha_tre: agg.boardNT,
+        boarding_mau_giao: agg.boardMG,
+        lunch_nha_tre: agg.boardNT,
+        lunch_mau_giao: agg.boardMG,
+        snack_nha_tre: agg.boardNT,
+        snack_mau_giao: agg.boardMG,
+        boarding_count: agg.grandBoarding,
+        lunch_count: agg.grandBoarding,
+        snack_count: agg.grandBoarding,
+        canceled_count: agg.grandAbsent,
+        absent_excused: agg.grandAbsent,
+        absent_unexcused: 0,
+        present_female_count: Math.min(female, agg.grandPresent),
+        present_ethnic_count: Math.min(ethnic, agg.grandPresent),
+      };
+    });
+
+    // 3. Tự động đồng bộ danh sách học sinh vắng nếu có
     if (enabledIndicators[0]) {
-      syncAbsentListToCount(computedGrandAbsent);
+      if (agg.grandAbsent === 0) {
+        setAbsentStudents([]);
+      } else {
+        syncAbsentListToCount(agg.grandAbsent);
+      }
     }
   };
 
@@ -1164,26 +1233,34 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
       boarding: present,
     };
 
+    const agg = computeTotalsFromAgeStats(stats);
+    const female = preschoolData.female_count || 0;
+    const ethnic = preschoolData.ethnic_count || 0;
     const isNT = Number(year) >= startYear - 2;
 
     setPreschoolData((prev) => ({
       ...prev,
       age_stats: stats,
-      total_nha_tre: isNT ? total : 0,
-      total_mau_giao: !isNT ? total : 0,
-      present_nha_tre: isNT ? present : 0,
-      present_mau_giao: !isNT ? present : 0,
-      absent_nha_tre: isNT ? absent : 0,
-      absent_mau_giao: !isNT ? absent : 0,
-      boarding_nha_tre: isNT ? present : 0,
-      boarding_mau_giao: !isNT ? present : 0,
-      boarding_count: present,
-      lunch_count: present,
-      lunch_nha_tre: isNT ? present : 0,
-      lunch_mau_giao: !isNT ? present : 0,
-      snack_count: present,
-      snack_nha_tre: isNT ? present : 0,
-      snack_mau_giao: !isNT ? present : 0,
+      total_nha_tre: agg.totNT,
+      total_mau_giao: agg.totMG,
+      present_nha_tre: agg.presNT,
+      present_mau_giao: agg.presMG,
+      absent_nha_tre: agg.absNT,
+      absent_mau_giao: agg.absMG,
+      boarding_nha_tre: agg.boardNT,
+      boarding_mau_giao: agg.boardMG,
+      boarding_count: agg.grandBoarding,
+      lunch_count: agg.grandBoarding,
+      lunch_nha_tre: agg.boardNT,
+      lunch_mau_giao: agg.boardMG,
+      snack_count: agg.grandBoarding,
+      snack_nha_tre: agg.boardNT,
+      snack_mau_giao: agg.boardMG,
+      canceled_count: agg.grandAbsent,
+      absent_excused: agg.grandAbsent,
+      absent_unexcused: 0,
+      present_female_count: Math.min(female, agg.grandPresent),
+      present_ethnic_count: Math.min(ethnic, agg.grandPresent),
       diet_type: isNT ? 'CHAO' : 'COM',
     }));
 
@@ -1204,22 +1281,23 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
     // Tự động đồng bộ tăng số vắng ở chỉ tiêu chính nếu cần
     if (enabledIndicators[0]) {
       const mainId = enabledIndicators[0].id;
-      setFormValues((prevVals) => {
-        const cur = prevVals[mainId] || { total: 0, present: 0, absent: 0 };
-        const total = typeof cur.total === 'number' ? cur.total : 0;
-        const curAbsent = typeof cur.absent === 'number' ? cur.absent : 0;
-        const newAbsent = Math.max(curAbsent, absentStudents.length + 1);
-        const newPresent = Math.max(0, total - newAbsent);
-        return {
-          ...prevVals,
-          [mainId]: {
-            ...cur,
-            total,
-            absent: newAbsent,
-            present: newPresent,
-          },
-        };
-      });
+      const cur = formValues[mainId] || { total: 0, present: 0, absent: 0 };
+      const total = typeof cur.total === 'number' ? cur.total : 0;
+      const curAbsent = typeof cur.absent === 'number' ? cur.absent : 0;
+      const newAbsent = Math.max(curAbsent, absentStudents.length + 1);
+      const newPresent = Math.max(0, total - newAbsent);
+
+      setFormValues((prevVals) => ({
+        ...prevVals,
+        [mainId]: {
+          ...cur,
+          total,
+          absent: newAbsent,
+          present: newPresent,
+        },
+      }));
+
+      syncMainAttendanceToPreschool(total, newPresent, newAbsent);
     }
   };
 
@@ -1287,49 +1365,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
         },
       }));
 
-      // Đồng bộ sang preschoolData (số HS có mặt đồng bộ với xuất ăn)
-      setPreschoolData((prev) => {
-        const stats = { ...(prev.age_stats || createDefaultAgeStats()) };
-        const activeYears = Object.keys(stats).filter((yr) => (stats[yr].total || 0) > 0);
-        let targetYear = activeYears.length === 1 ? activeYears[0] : '';
-        if (!targetYear) {
-          targetYear = getDefaultCohortYear(selectedClass?.class_name, selectedClass?.grade);
-        }
-
-        if (targetYear && stats[targetYear]) {
-          stats[targetYear] = {
-            total: total > 0 ? total : (stats[targetYear].total || total),
-            present: newPresent,
-            absent: newAbsent,
-            boarding: newPresent,
-          };
-        }
-
-        const isNTClass = isNhaTreClass(selectedClass?.class_name, selectedClass?.grade);
-        const bNT = isNTClass ? newPresent : (prev.boarding_nha_tre || 0);
-        const bMG = !isNTClass ? newPresent : (prev.boarding_mau_giao || 0);
-
-        return {
-          ...prev,
-          age_stats: stats,
-          absent_excused: newAbsent,
-          absent_unexcused: 0,
-          boarding_count: newPresent,
-          lunch_count: newPresent,
-          snack_count: newPresent,
-          canceled_count: newAbsent,
-          boarding_nha_tre: bNT,
-          boarding_mau_giao: bMG,
-          lunch_nha_tre: bNT,
-          lunch_mau_giao: bMG,
-          snack_nha_tre: bNT,
-          snack_mau_giao: bMG,
-          present_nha_tre: isNTClass ? newPresent : prev.present_nha_tre,
-          present_mau_giao: !isNTClass ? newPresent : prev.present_mau_giao,
-          absent_nha_tre: isNTClass ? newAbsent : prev.absent_nha_tre,
-          absent_mau_giao: !isNTClass ? newAbsent : prev.absent_mau_giao,
-        };
-      });
+      syncMainAttendanceToPreschool(total, newPresent, newAbsent);
     }
   };
 
@@ -1407,25 +1443,23 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
     // Tự động đồng bộ giảm số vắng ở chỉ tiêu chính nếu đang bằng số em trong danh sách
     if (enabledIndicators[0]) {
       const mainId = enabledIndicators[0].id;
-      setFormValues((prevVals) => {
-        const cur = prevVals[mainId] || { total: 0, present: 0, absent: 0 };
-        const total = typeof cur.total === 'number' ? cur.total : 0;
-        const curAbsent = typeof cur.absent === 'number' ? cur.absent : 0;
-        if (curAbsent > updated.length) {
-          const newAbsent = updated.length;
-          const newPresent = Math.max(0, total - newAbsent);
-          return {
-            ...prevVals,
-            [mainId]: {
-              ...cur,
-              total,
-              absent: newAbsent,
-              present: newPresent,
-            },
-          };
-        }
-        return prevVals;
-      });
+      const cur = formValues[mainId] || { total: 0, present: 0, absent: 0 };
+      const total = typeof cur.total === 'number' ? cur.total : 0;
+      const curAbsent = typeof cur.absent === 'number' ? cur.absent : 0;
+      if (curAbsent > updated.length) {
+        const newAbsent = updated.length;
+        const newPresent = Math.max(0, total - newAbsent);
+        setFormValues((prevVals) => ({
+          ...prevVals,
+          [mainId]: {
+            ...cur,
+            total,
+            absent: newAbsent,
+            present: newPresent,
+          },
+        }));
+        syncMainAttendanceToPreschool(total, newPresent, newAbsent);
+      }
     }
   };
 
@@ -1490,21 +1524,20 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
       // Tự động đồng bộ sĩ số vắng ở nhóm chỉ tiêu chính
       if (enabledIndicators[0]) {
         const mainId = enabledIndicators[0].id;
-        setFormValues((prev) => {
-          const cur = prev[mainId] || { total: 0, present: 0, absent: 0 };
-          const total = typeof cur.total === 'number' ? cur.total : 0;
-          const newAbsent = parsed.length;
-          const newPresent = Math.max(0, total - newAbsent);
-          return {
-            ...prev,
-            [mainId]: {
-              ...cur,
-              total,
-              absent: newAbsent,
-              present: newPresent,
-            },
-          };
-        });
+        const cur = formValues[mainId] || { total: 0, present: 0, absent: 0 };
+        const total = typeof cur.total === 'number' ? cur.total : 0;
+        const newAbsent = parsed.length;
+        const newPresent = Math.max(0, total - newAbsent);
+        setFormValues((prev) => ({
+          ...prev,
+          [mainId]: {
+            ...cur,
+            total,
+            absent: newAbsent,
+            present: newPresent,
+          },
+        }));
+        syncMainAttendanceToPreschool(total, newPresent, newAbsent);
       }
     }
   };
@@ -2153,7 +2186,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
               </div>
               <div className="flex flex-wrap items-center gap-1.5">
                 {[
-                  ...nhaTreAgeGroupItems.filter(item => item.year !== String(startYear)).map(item => ({
+                  ...nhaTreAgeGroupItems.map(item => ({
                     year: item.year,
                     label: `Sinh ${item.year} (${item.ageLabel})`,
                     isNT: true,
@@ -2393,7 +2426,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
                   type="text"
                   inputMode="numeric"
                   disabled={isLocked && !isAdmin}
-                  value={preschoolData.female_count}
+                  value={preschoolData.female_count ?? 0}
                   onChange={(e) => {
                     const val = parseInt(e.target.value.replace(/[^0-9]/g, ''), 10) || 0;
                     setPreschoolData((prev) => ({
@@ -2415,7 +2448,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
                   type="text"
                   inputMode="numeric"
                   disabled={isLocked && !isAdmin}
-                  value={preschoolData.ethnic_count}
+                  value={preschoolData.ethnic_count ?? 0}
                   onChange={(e) => {
                     const val = parseInt(e.target.value.replace(/[^0-9]/g, ''), 10) || 0;
                     setPreschoolData((prev) => ({
@@ -2550,7 +2583,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
                     type="text"
                     inputMode="numeric"
                     disabled={isLocked && !isAdmin}
-                    value={preschoolData.present_female_count}
+                    value={preschoolData.present_female_count ?? 0}
                     onChange={(e) => {
                       const val = parseInt(e.target.value.replace(/[^0-9]/g, ''), 10) || 0;
                       setPreschoolData((prev) => ({ ...prev, present_female_count: val }));
@@ -2567,7 +2600,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
                     type="text"
                     inputMode="numeric"
                     disabled={isLocked && !isAdmin}
-                    value={preschoolData.present_ethnic_count}
+                    value={preschoolData.present_ethnic_count ?? 0}
                     onChange={(e) => {
                       const val = parseInt(e.target.value.replace(/[^0-9]/g, ''), 10) || 0;
                       setPreschoolData((prev) => ({ ...prev, present_ethnic_count: val }));
@@ -2611,7 +2644,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
                     type="text"
                     inputMode="numeric"
                     disabled={isLocked && !isAdmin}
-                    value={preschoolData.absent_excused}
+                    value={preschoolData.absent_excused ?? 0}
                     onChange={(e) => {
                       const val = parseInt(e.target.value.replace(/[^0-9]/g, ''), 10) || 0;
                       setPreschoolData((prev) => ({ ...prev, absent_excused: val }));
@@ -2628,7 +2661,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
                     type="text"
                     inputMode="numeric"
                     disabled={isLocked && !isAdmin}
-                    value={preschoolData.absent_unexcused}
+                    value={preschoolData.absent_unexcused ?? 0}
                     onChange={(e) => {
                       const val = parseInt(e.target.value.replace(/[^0-9]/g, ''), 10) || 0;
                       setPreschoolData((prev) => ({ ...prev, absent_unexcused: val }));
@@ -2925,7 +2958,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
                   type="text"
                   inputMode="numeric"
                   disabled={isLocked && !isAdmin}
-                  value={preschoolData.boarding_count}
+                  value={preschoolData.boarding_count ?? 0}
                   onChange={(e) => {
                     const val = parseInt(e.target.value.replace(/[^0-9]/g, ''), 10) || 0;
                     setPreschoolData((prev) => ({ ...prev, boarding_count: val }));
@@ -2947,7 +2980,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
                   type="text"
                   inputMode="numeric"
                   disabled={isLocked && !isAdmin}
-                  value={preschoolData.lunch_count}
+                  value={preschoolData.lunch_count ?? 0}
                   onChange={(e) => {
                     const val = parseInt(e.target.value.replace(/[^0-9]/g, ''), 10) || 0;
                     setPreschoolData((prev) => ({ ...prev, lunch_count: val }));
@@ -2965,7 +2998,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
                   type="text"
                   inputMode="numeric"
                   disabled={isLocked && !isAdmin}
-                  value={preschoolData.snack_count}
+                  value={preschoolData.snack_count ?? 0}
                   onChange={(e) => {
                     const val = parseInt(e.target.value.replace(/[^0-9]/g, ''), 10) || 0;
                     setPreschoolData((prev) => ({ ...prev, snack_count: val }));

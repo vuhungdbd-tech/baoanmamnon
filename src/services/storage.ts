@@ -377,6 +377,159 @@ function mergeCloudIntoLocal<T extends { id: string }>(storageKey: string, cloud
 // ----------------------------------------------------
 // STORAGE SERVICE CRUD & FULL SUPABASE PERSISTENCE API
 // ----------------------------------------------------
+
+/**
+ * Đảm bảo các ràng buộc khóa ngoại (Foreign Keys) cho bảng daily_reports tồn tại trên Supabase
+ * Tránh triệt để lỗi 23503 (Key is not present in table "classes", "profiles", "indicator_groups").
+ */
+async function ensureReportDependenciesInSupabase(
+  supabase: any,
+  classId: string,
+  user?: Profile,
+  groupIds: string[] = []
+): Promise<void> {
+  if (!supabase) return;
+  try {
+    // 1. Đảm bảo user profile tồn tại trên Supabase để tránh lỗi daily_reports_created_by_fkey
+    if (user?.id) {
+      try {
+        await supabase.from('profiles').upsert({
+          id: user.id,
+          full_name: user.full_name || 'Người dùng',
+          email: user.email || `${user.id}@school.edu.vn`,
+          role: user.role || 'GVCN',
+          active: user.active !== false,
+          phone: user.phone || '',
+          created_at: user.created_at || new Date().toISOString(),
+        });
+      } catch (e) {
+        console.warn('ensureProfile in Supabase notice:', e);
+      }
+    }
+
+    // 2. Đảm bảo class tồn tại trên Supabase để triệt để tránh lỗi 23503: daily_reports_class_id_fkey
+    const rawClasses = localStorage.getItem(STORAGE_KEYS.CLASSES) || localStorage.getItem('classes');
+    const classes: ClassItem[] = rawClasses ? JSON.parse(rawClasses) : [];
+    const cls = classes.find((c) => c.id === classId);
+
+    // Kiểm tra xem lớp đã có sẵn trên Supabase chưa
+    let classExistsOnCloud = false;
+    try {
+      const { data: existingCloudClass } = await supabase
+        .from('classes')
+        .select('id')
+        .eq('id', classId)
+        .maybeSingle();
+      if (existingCloudClass && existingCloudClass.id) {
+        classExistsOnCloud = true;
+      }
+    } catch (e) {}
+
+    if (!classExistsOnCloud) {
+      // Đảm bảo school_year tồn tại nếu lớp có gắn school_year_id
+      let validYearId: string | null = null;
+      if (cls?.school_year_id) {
+        try {
+          const rawYears = localStorage.getItem(STORAGE_KEYS.YEARS);
+          const years: SchoolYear[] = rawYears ? JSON.parse(rawYears) : [];
+          const y = years.find((item) => item.id === cls.school_year_id);
+          if (y) {
+            await supabase.from('school_years').upsert({
+              id: y.id,
+              name: y.name || '2026-2027',
+              is_active: y.is_active !== false,
+              is_locked: !!y.is_locked,
+              created_at: y.created_at || new Date().toISOString(),
+            });
+            validYearId = y.id;
+          }
+        } catch (e) {
+          console.warn('ensure school_year notice:', e);
+        }
+      }
+
+      // Đảm bảo campus tồn tại nếu lớp có gắn campus_id
+      let validCampusId: string | null = null;
+      if (cls?.campus_id) {
+        try {
+          const rawCampuses = localStorage.getItem(STORAGE_KEYS.CAMPUSES);
+          const campuses: Campus[] = rawCampuses ? JSON.parse(rawCampuses) : [];
+          const cp = campuses.find((item) => item.id === cls.campus_id);
+          if (cp) {
+            await supabase.from('campuses').upsert({
+              id: cp.id,
+              name: cp.name || 'Điểm trường',
+              active: cp.active !== false,
+              created_at: cp.created_at || new Date().toISOString(),
+            });
+            validCampusId = cp.id;
+          }
+        } catch (e) {
+          console.warn('ensure campus notice:', e);
+        }
+      }
+
+      // Chuẩn bị payload lớp học hợp lệ theo schema database (không gửi student_count)
+      const classPayload: any = {
+        id: classId,
+        class_name: cls?.class_name || `Lớp ${classId}`,
+        grade: Math.max(1, Math.min(12, Number(cls?.grade) || 1)),
+        active: cls?.active !== false,
+        is_locked: !!cls?.is_locked,
+        sort_order: Number(cls?.sort_order) || 0,
+        created_at: cls?.created_at || new Date().toISOString(),
+      };
+      if (validYearId) classPayload.school_year_id = validYearId;
+      if (validCampusId) classPayload.campus_id = validCampusId;
+
+      let { error: clsErr } = await supabase.from('classes').upsert(classPayload);
+      if (clsErr) {
+        // Thử lại với các foreign keys nullable để chắc chắn bảng classes có id này
+        const strippedPayload = {
+          ...classPayload,
+          school_year_id: null,
+          campus_id: null,
+          homeroom_teacher_id: null,
+        };
+        const { error: retryErr } = await supabase.from('classes').upsert(strippedPayload);
+        if (retryErr) {
+          console.error('Failed to upsert class to Supabase:', retryErr);
+        }
+      }
+    }
+
+    // 3. Đảm bảo indicator_groups tồn tại trên Supabase để tránh lỗi daily_report_values_indicator_group_id_fkey
+    if (groupIds && groupIds.length > 0) {
+      const rawIndicators = localStorage.getItem(STORAGE_KEYS.INDICATORS);
+      const indicators: IndicatorGroup[] = rawIndicators ? JSON.parse(rawIndicators) : [];
+      for (const gid of groupIds) {
+        const ig = indicators.find((item) => item.id === gid);
+        if (ig) {
+          try {
+            await supabase.from('indicator_groups').upsert({
+              id: ig.id,
+              name: ig.name,
+              code: ig.code,
+              enabled: ig.enabled !== false,
+              sort_order: Number(ig.sort_order) || 0,
+              show_total: ig.show_total !== false,
+              show_present: ig.show_present !== false,
+              show_absent: ig.show_absent !== false,
+              show_percentage: ig.show_percentage !== false,
+              column_header_override: ig.column_header_override || null,
+              created_at: ig.created_at || new Date().toISOString(),
+            });
+          } catch (e) {
+            console.warn('ensure indicator_group in Supabase notice:', e);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('ensureReportDependenciesInSupabase notice:', err);
+  }
+}
+
 export const StorageService = {
   // --- 1. School Settings ---
   async getSettings(): Promise<SchoolSettings> {
@@ -819,8 +972,37 @@ export const StorageService = {
         const supabase = getSupabaseClient();
         if (supabase) {
           const { data: cloudData, error } = await supabase.from('classes').select('*').order('sort_order', { ascending: true });
-          if (!error && cloudData && cloudData.length > 0) {
-            mergeCloudIntoLocal(STORAGE_KEYS.CLASSES, cloudData);
+          if (!error) {
+            if (cloudData && cloudData.length > 0) {
+              mergeCloudIntoLocal(STORAGE_KEYS.CLASSES, cloudData);
+            }
+            // Tự động đẩy các lớp cục bộ chưa có trên Cloud lên Supabase để tránh lỗi khóa ngoại
+            const cloudIds = new Set((cloudData || []).map((c: any) => c.id));
+            const missingInCloud = data.filter((c) => !cloudIds.has(c.id));
+            if (missingInCloud.length > 0) {
+              const toUpsert = missingInCloud.map((c) => ({
+                id: c.id,
+                class_name: c.class_name,
+                grade: Math.max(1, Math.min(12, Number(c.grade) || 1)),
+                school_year_id: c.school_year_id || null,
+                campus_id: c.campus_id || null,
+                homeroom_teacher_id: c.homeroom_teacher_id || null,
+                active: c.active !== false,
+                is_locked: !!c.is_locked,
+                sort_order: Number(c.sort_order) || 0,
+                created_at: c.created_at || new Date().toISOString(),
+              }));
+              const { error: upErr } = await supabase.from('classes').upsert(toUpsert);
+              if (upErr) {
+                const fallback = toUpsert.map((c) => ({
+                  ...c,
+                  school_year_id: null,
+                  campus_id: null,
+                  homeroom_teacher_id: null,
+                }));
+                await supabase.from('classes').upsert(fallback);
+              }
+            }
           }
         }
       });
@@ -880,7 +1062,30 @@ export const StorageService = {
 
     syncToSupabase(async () => {
       const supabase = getSupabaseClient();
-      if (supabase) await supabase.from('classes').upsert(classItem);
+      if (supabase) {
+        const cleanItem: any = {
+          id: classItem.id,
+          class_name: classItem.class_name,
+          grade: Math.max(1, Math.min(12, Number(classItem.grade) || 1)),
+          school_year_id: classItem.school_year_id || null,
+          campus_id: classItem.campus_id || null,
+          homeroom_teacher_id: classItem.homeroom_teacher_id || null,
+          active: classItem.active !== false,
+          is_locked: !!classItem.is_locked,
+          sort_order: Number(classItem.sort_order) || 0,
+          created_at: classItem.created_at || new Date().toISOString(),
+        };
+        let { error: cErr } = await supabase.from('classes').upsert(cleanItem);
+        if (cErr) {
+          const stripped = {
+            ...cleanItem,
+            school_year_id: null,
+            campus_id: null,
+            homeroom_teacher_id: null,
+          };
+          await supabase.from('classes').upsert(stripped);
+        }
+      }
     });
 
     // 2-way sync with homeroom teacher profile
@@ -1556,9 +1761,30 @@ export const StorageService = {
     if (supabase && isSupabaseConnected()) {
       Promise.resolve().then(async () => {
         try {
+          // 1. Đảm bảo lớp học và các khóa ngoại phụ thuộc đã tồn tại trên Supabase
+          await ensureReportDependenciesInSupabase(
+            supabase,
+            classId,
+            user,
+            Object.keys(valuesByGroup)
+          );
+
           // Chuẩn bị dữ liệu report để gửi lên Supabase
           let repData: any = { ...report };
           let { error: repErr } = await supabase.from('daily_reports').upsert(repData);
+
+          // Nếu Supabase báo lỗi 23503 foreign key (classes hoặc profiles) -> đảm bảo dependencies và retry
+          if (repErr && (repErr.code === '23503' || repErr.message?.includes('violates foreign key constraint'))) {
+            if (repErr.message?.includes('classes') || repErr.details?.includes('classes')) {
+              await ensureReportDependenciesInSupabase(supabase, classId, user, Object.keys(valuesByGroup));
+              const retryClassRes = await supabase.from('daily_reports').upsert(repData);
+              repErr = retryClassRes.error;
+            } else if (repErr.message?.includes('profiles') || repErr.details?.includes('profiles')) {
+              repData = { ...repData, created_by: null };
+              const retryProfRes = await supabase.from('daily_reports').upsert(repData);
+              repErr = retryProfRes.error;
+            }
+          }
 
           // Nếu Supabase báo lỗi chưa có cột reported_time (schema cache cũ) -> loại bỏ reported_time và thử lại
           if (repErr && (repErr.message?.includes('reported_time') || repErr.code === 'PGRST204')) {
@@ -1574,7 +1800,13 @@ export const StorageService = {
           }
 
           if (newValues.length > 0) {
-            const { error: valErr } = await supabase.from('daily_report_values').upsert(newValues);
+            let { error: valErr } = await supabase.from('daily_report_values').upsert(newValues);
+            if (valErr && (valErr.code === '23503' || valErr.message?.includes('violates foreign key constraint'))) {
+              // Thử đảm bảo lại indicator_groups và retry
+              await ensureReportDependenciesInSupabase(supabase, classId, user, Object.keys(valuesByGroup));
+              const retryValRes = await supabase.from('daily_report_values').upsert(newValues);
+              valErr = retryValRes.error;
+            }
             if (valErr) console.error('Supabase upsert daily_report_values error:', valErr);
           }
         } catch (err) {
@@ -1769,6 +2001,7 @@ export const StorageService = {
 
         if (isConnected) {
           try {
+            await ensureReportDependenciesInSupabase(supabase, cls.id, adminUser, []);
             await supabase.from('daily_reports').insert(newReport);
           } catch (e) {
             console.error('Supabase insert locked report error:', e);
@@ -2818,7 +3051,29 @@ export const StorageService = {
       // 5. classes
       const classes = await this.getClasses();
       if (classes.length > 0) {
-        const { error: clErr } = await supabase.from('classes').upsert(classes);
+        const cleanClasses = classes.map((c) => ({
+          id: c.id,
+          class_name: c.class_name,
+          grade: Math.max(1, Math.min(12, Number(c.grade) || 1)),
+          school_year_id: c.school_year_id || null,
+          campus_id: c.campus_id || null,
+          homeroom_teacher_id: c.homeroom_teacher_id || null,
+          active: c.active !== false,
+          is_locked: !!c.is_locked,
+          sort_order: Number(c.sort_order) || 0,
+          created_at: c.created_at || new Date().toISOString(),
+        }));
+        let { error: clErr } = await supabase.from('classes').upsert(cleanClasses);
+        if (clErr) {
+          const stripped = cleanClasses.map((c) => ({
+            ...c,
+            school_year_id: null,
+            campus_id: null,
+            homeroom_teacher_id: null,
+          }));
+          const retry = await supabase.from('classes').upsert(stripped);
+          clErr = retry.error;
+        }
         details.classes = { count: classes.length, error: clErr?.message };
       }
 
