@@ -316,7 +316,23 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
         totals.absentExcused += absEx;
         totals.absentUnexcused += ps?.absent_unexcused ?? Math.max(0, absent - absEx);
 
-        const board = Number(ps?.boarding_count) || (boardingIndicator ? (row.values[boardingIndicator.id]?.total || 0) : 0);
+        const isNT = isNhaTreClass(row.class_name, row.grade);
+        let board = Number(ps?.boarding_count);
+        if (isNaN(board) || board <= 0) {
+          if (boardingIndicator && row.values[boardingIndicator.id]?.total) {
+            board = row.values[boardingIndicator.id].total;
+          } else if (present > 0) {
+            board = present;
+          } else {
+            board = 0;
+          }
+        }
+
+        let bNT = Number(ps?.boarding_nha_tre) || 0;
+        let bMG = Number(ps?.boarding_mau_giao) || 0;
+        if (isNT && bNT === 0 && board > 0) bNT = board;
+        if (!isNT && bMG === 0 && board > 0) bMG = board;
+
         totals.boardingCount += board;
         totals.lunchCount += Number(ps?.lunch_count) || board;
         totals.snackCount += Number(ps?.snack_count) || board;
@@ -325,20 +341,20 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
         totals.healthIssueCount += Number(ps?.health_issue_count) || 0;
 
         // Báo ăn Nhà trẻ vs Mẫu giáo
-        totals.boardingNhaTre = (totals.boardingNhaTre || 0) + (Number(ps?.boarding_nha_tre) || 0);
-        totals.boardingMauGiao = (totals.boardingMauGiao || 0) + (Number(ps?.boarding_mau_giao) || 0);
-        totals.lunchNhaTre = (totals.lunchNhaTre || 0) + (Number(ps?.lunch_nha_tre) || 0);
-        totals.lunchMauGiao = (totals.lunchMauGiao || 0) + (Number(ps?.lunch_mau_giao) || 0);
-        totals.snackNhaTre = (totals.snackNhaTre || 0) + (Number(ps?.snack_nha_tre) || 0);
-        totals.snackMauGiao = (totals.snackMauGiao || 0) + (Number(ps?.snack_mau_giao) || 0);
+        totals.boardingNhaTre = (totals.boardingNhaTre || 0) + bNT;
+        totals.boardingMauGiao = (totals.boardingMauGiao || 0) + bMG;
+        totals.lunchNhaTre = (totals.lunchNhaTre || 0) + (Number(ps?.lunch_nha_tre) || bNT);
+        totals.lunchMauGiao = (totals.lunchMauGiao || 0) + (Number(ps?.lunch_mau_giao) || bMG);
+        totals.snackNhaTre = (totals.snackNhaTre || 0) + (Number(ps?.snack_nha_tre) || bNT);
+        totals.snackMauGiao = (totals.snackMauGiao || 0) + (Number(ps?.snack_mau_giao) || bMG);
 
         // Sĩ số & Có mặt Nhà trẻ vs Mẫu giáo
-        totals.totalNhaTre = (totals.totalNhaTre || 0) + (Number(ps?.total_nha_tre) || 0);
-        totals.totalMauGiao = (totals.totalMauGiao || 0) + (Number(ps?.total_mau_giao) || 0);
-        totals.presentNhaTre = (totals.presentNhaTre || 0) + (Number(ps?.present_nha_tre) || 0);
-        totals.presentMauGiao = (totals.presentMauGiao || 0) + (Number(ps?.present_mau_giao) || 0);
-        totals.absentNhaTre = (totals.absentNhaTre || 0) + (Number(ps?.absent_nha_tre) || 0);
-        totals.absentMauGiao = (totals.absentMauGiao || 0) + (Number(ps?.absent_mau_giao) || 0);
+        totals.totalNhaTre = (totals.totalNhaTre || 0) + (Number(ps?.total_nha_tre) || (isNT ? total : 0));
+        totals.totalMauGiao = (totals.totalMauGiao || 0) + (Number(ps?.total_mau_giao) || (!isNT ? total : 0));
+        totals.presentNhaTre = (totals.presentNhaTre || 0) + (Number(ps?.present_nha_tre) || (isNT ? present : 0));
+        totals.presentMauGiao = (totals.presentMauGiao || 0) + (Number(ps?.present_mau_giao) || (!isNT ? present : 0));
+        totals.absentNhaTre = (totals.absentNhaTre || 0) + (Number(ps?.absent_nha_tre) || (isNT ? absent : 0));
+        totals.absentMauGiao = (totals.absentMauGiao || 0) + (Number(ps?.absent_mau_giao) || (!isNT ? absent : 0));
 
         // Thống kê theo từng năm sinh (2025, 2024, 2023, 2022, 2021...)
         if (ps?.age_stats && totals.byYear) {
@@ -346,10 +362,12 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
             if (!totals.byYear![yr]) {
               totals.byYear![yr] = { total: 0, present: 0, absent: 0, boarding: 0 };
             }
+            const p = Number(stats?.present) || 0;
+            const b = Number(stats?.boarding);
             totals.byYear![yr].total += Number(stats?.total) || 0;
-            totals.byYear![yr].present += Number(stats?.present) || 0;
-            totals.byYear![yr].absent += Number(stats?.absent) || Math.max(0, (Number(stats?.total) || 0) - (Number(stats?.present) || 0));
-            totals.byYear![yr].boarding += Number(stats?.boarding) || 0;
+            totals.byYear![yr].present += p;
+            totals.byYear![yr].absent += Number(stats?.absent) || Math.max(0, (Number(stats?.total) || 0) - p);
+            totals.byYear![yr].boarding += b > 0 ? b : p; // Đồng bộ suất ăn với số trẻ có mặt
           });
         }
       }
@@ -1573,11 +1591,11 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                   const presentAll = allVal?.present ?? Math.max(0, totalAll - absentAll);
                   const isNT = isNhaTreClass(row.classItem.class_name, row.classItem.grade);
 
-                  const boardingVal = isReported
-                    ? (isNT
-                        ? (ps?.boarding_nha_tre ?? ps?.boarding_count ?? (boardingIndicator ? (row.values[boardingIndicator.id]?.total || 0) : 0))
-                        : (ps?.boarding_mau_giao ?? ps?.boarding_count ?? (boardingIndicator ? (row.values[boardingIndicator.id]?.total || 0) : 0)))
-                    : '';
+                  let rawBoard = isNT ? (ps?.boarding_nha_tre ?? ps?.boarding_count) : (ps?.boarding_mau_giao ?? ps?.boarding_count);
+                  if (isReported && (rawBoard === undefined || rawBoard === null || (Number(rawBoard) === 0 && presentAll > 0))) {
+                    rawBoard = presentAll;
+                  }
+                  const boardingVal = isReported ? (rawBoard ?? (boardingIndicator ? (row.values[boardingIndicator.id]?.total || 0) : 0)) : '';
 
                   const rateStr = totalAll > 0 && isReported
                     ? ((presentAll / totalAll) * 100).toFixed(2).replace('.', ',')
@@ -1814,19 +1832,35 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
 
                   const absentAll = allVal?.absent ?? ((ps?.absent_excused || 0) + (ps?.absent_unexcused || 0));
                   const presentAll = allVal?.present ?? Math.max(0, totalAll - absentAll);
+                  const isNT = isNhaTreClass(row.classItem.class_name, row.classItem.grade);
 
-                  const totalNT = ps?.total_nha_tre ?? 0;
-                  const presentNT = ps?.present_nha_tre ?? 0;
+                  const totalNT = ps?.total_nha_tre ?? (isNT ? totalAll : 0);
+                  const presentNT = ps?.present_nha_tre ?? (isNT ? presentAll : 0);
                   const absentNT = ps?.absent_nha_tre ?? Math.max(0, totalNT - presentNT);
-                  const boardingNT = ps?.boarding_nha_tre ?? 0;
+                  let boardingNT = ps?.boarding_nha_tre;
+                  if (isReported && isNT && (boardingNT === undefined || boardingNT === null || (Number(boardingNT) === 0 && presentAll > 0))) {
+                    boardingNT = presentAll;
+                  } else if (!boardingNT) {
+                    boardingNT = 0;
+                  }
 
-                  const totalMG = ps?.total_mau_giao ?? 0;
-                  const presentMG = ps?.present_mau_giao ?? 0;
+                  const totalMG = ps?.total_mau_giao ?? (!isNT ? totalAll : 0);
+                  const presentMG = ps?.present_mau_giao ?? (!isNT ? presentAll : 0);
                   const absentMG = ps?.absent_mau_giao ?? Math.max(0, totalMG - presentMG);
-                  const boardingMG = ps?.boarding_mau_giao ?? 0;
+                  let boardingMG = ps?.boarding_mau_giao;
+                  if (isReported && !isNT && (boardingMG === undefined || boardingMG === null || (Number(boardingMG) === 0 && presentAll > 0))) {
+                    boardingMG = presentAll;
+                  } else if (!boardingMG) {
+                    boardingMG = 0;
+                  }
 
-                  const boardingTotal = ps?.boarding_count ?? (boardingIndicator ? (row.values[boardingIndicator.id]?.total || 0) : 0);
-                  const canceledTotal = ps?.canceled_count ?? 0;
+                  let boardingTotal = ps?.boarding_count;
+                  if (isReported && (boardingTotal === undefined || boardingTotal === null || (Number(boardingTotal) === 0 && presentAll > 0))) {
+                    boardingTotal = presentAll;
+                  } else if (!boardingTotal) {
+                    boardingTotal = (Number(boardingNT) || 0) + (Number(boardingMG) || 0) || (boardingIndicator ? (row.values[boardingIndicator.id]?.total || 0) : 0);
+                  }
+                  const canceledTotal = ps?.canceled_count ?? absentAll;
 
                   const renderYearStat = (yr: string) => {
                     if (!isReported) return '-';
@@ -1834,11 +1868,13 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                     if (!stat || ((stat.total || 0) === 0 && (stat.present || 0) === 0 && (stat.boarding || 0) === 0)) {
                       return <span className="text-slate-300">-</span>;
                     }
+                    const p = stat.present ?? 0;
+                    const b = (stat.boarding !== undefined && stat.boarding !== null && (stat.boarding > 0 || p === 0)) ? stat.boarding : p;
                     return (
                       <div className="text-[10px] leading-tight">
-                        <span className="font-bold text-emerald-800">{stat.present ?? 0}</span>
+                        <span className="font-bold text-emerald-800">{p}</span>
                         <span className="text-slate-400">/{stat.total ?? 0}</span>
-                        <span className="text-amber-800 font-bold ml-1 block sm:inline">({stat.boarding ?? 0} ăn)</span>
+                        <span className="text-amber-800 font-bold ml-1 block sm:inline">({b} ăn)</span>
                       </div>
                     );
                   };
