@@ -1126,12 +1126,17 @@ export const ClassesManagementPage: React.FC = () => {
                             {(() => {
                               const pg = preschoolGrades.find((p) => p.grade_num === c.grade);
                               const isNT = (pg && pg.category === 'NHA_TRE') || c.grade === 1;
+                              const rawName = pg?.name || '';
+                              const isSecondary = /^Khối\s*[6-9]\b/i.test(rawName) || (!pg && c.grade && c.grade >= 6);
+                              const displayName = isSecondary
+                                ? 'Mẫu giáo'
+                                : pg ? pg.name.replace('Khối ', '') : (c.grade === 1 ? 'Nhà trẻ' : 'Mẫu giáo');
                               return (
                                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md inline-flex items-center gap-1 shrink-0 whitespace-nowrap ${
                                   isNT ? 'bg-amber-100 text-amber-900 border border-amber-300' : 'bg-teal-50 text-teal-800 border border-teal-200'
                                 }`}>
                                   {isNT ? <Baby className="w-3 h-3 text-amber-700" /> : null}
-                                  <span>{pg ? pg.name.replace('Khối ', '') : (c.grade === 1 ? 'Nhà trẻ' : 'Mẫu giáo')}</span>
+                                  <span>{displayName}</span>
                                 </span>
                               );
                             })()}
@@ -1157,14 +1162,22 @@ export const ClassesManagementPage: React.FC = () => {
                           (() => {
                             const pg = preschoolGrades.find((p) => p.grade_num === c.grade);
                             const isNT = (pg && pg.category === 'NHA_TRE') || c.grade === 1;
+                            const rawName = pg?.name || '';
+                            const isSecondary = /^Khối\s*[6-9]\b/i.test(rawName) || (!pg && c.grade && c.grade >= 6);
+                            const gradeTitle = isSecondary
+                              ? 'Khối Mẫu giáo Ghép'
+                              : pg ? pg.name : (c.grade === 1 ? 'Khối Nhà trẻ' : 'Khối Mẫu giáo');
+                            const ageRangeText = isSecondary
+                              ? '3 - 6 tuổi'
+                              : pg ? pg.age_range : (c.grade === 1 ? '24 - 36 tháng' : '3 - 6 tuổi');
                             return (
                               <div className="flex flex-col">
                                 <span className="font-bold text-xs text-slate-800 flex items-center gap-1">
                                   {isNT ? <Baby className="w-3.5 h-3.5 text-amber-600" /> : <GraduationCap className="w-3.5 h-3.5 text-teal-600" />}
-                                  <span>{pg ? pg.name : (c.grade === 1 ? 'Khối Nhà trẻ' : 'Khối Mẫu giáo')}</span>
+                                  <span>{gradeTitle}</span>
                                 </span>
                                 <span className="text-[11px] text-slate-500 font-medium">
-                                  Độ tuổi: <strong className="text-slate-700">{pg ? pg.age_range : (c.grade === 1 ? '24 - 36 tháng' : '3 - 6 tuổi')}</strong>
+                                  Độ tuổi: <strong className="text-slate-700">{ageRangeText}</strong>
                                 </span>
                               </div>
                             );

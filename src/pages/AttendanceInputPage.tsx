@@ -10,6 +10,7 @@ import {
   AgeGroupStat,
   getPreschoolBirthYearsForSchoolYear,
   parseSchoolStartYear,
+  formatPreschoolClassOption,
 } from '../types';
 import {
   getTeacherAllowedScope,
@@ -1700,7 +1701,12 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
                 </span>
                 {selectedClass && (
                   <span className="text-xs font-black text-slate-800 bg-slate-100 px-2 py-0.5 rounded-md">
-                    {preschoolGrades.find((p) => p.grade_num === selectedClass.grade)?.name || `Khối ${selectedClass.grade}`}
+                    {(() => {
+                      const pg = preschoolGrades.find((p) => p.grade_num === selectedClass.grade);
+                      if (pg && !/^Khối\s*[6-9]\b/i.test(pg.name)) return pg.name;
+                      if (selectedClass.grade && selectedClass.grade < 6) return `Khối ${selectedClass.grade}`;
+                      return selectedClass.class_name;
+                    })()}
                   </span>
                 )}
                 {isGVCN && (
@@ -1795,41 +1801,32 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
                           if (campusClasses.length === 0) return null;
                           return (
                             <optgroup key={campus.id} label={campus.name}>
-                              {campusClasses.map((c) => {
-                                const pg = preschoolGrades.find((p) => p.grade_num === c.grade);
-                                return (
-                                  <option key={c.id} value={c.id}>
-                                    Lớp {c.class_name} ({pg ? pg.name : `Khối ${c.grade}`})
-                                  </option>
-                                );
-                              })}
+                              {campusClasses.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {formatPreschoolClassOption(c, preschoolGrades)}
+                                </option>
+                              ))}
                             </optgroup>
                           );
                         })}
                         {classPool.filter((c) => !c.campus_id).length > 0 && (
                           <optgroup label="Chưa xếp phân hiệu">
-                            {classPool.filter((c) => !c.campus_id).map((c) => {
-                              const pg = preschoolGrades.find((p) => p.grade_num === c.grade);
-                              return (
-                                <option key={c.id} value={c.id}>
-                                  Lớp {c.class_name} ({pg ? pg.name : `Khối ${c.grade}`})
-                                </option>
-                              );
-                            })}
+                            {classPool.filter((c) => !c.campus_id).map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {formatPreschoolClassOption(c, preschoolGrades)}
+                              </option>
+                            ))}
                           </optgroup>
                         )}
                       </>
                     );
                   }
 
-                  return classPool.map((c) => {
-                    const pg = preschoolGrades.find((p) => p.grade_num === c.grade);
-                    return (
-                      <option key={c.id} value={c.id}>
-                        Lớp {c.class_name} ({pg ? `${pg.name} - ${pg.age_range}` : `Khối ${c.grade}`})
-                      </option>
-                    );
-                  });
+                  return classPool.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {formatPreschoolClassOption(c, preschoolGrades)}
+                    </option>
+                  ));
                 })()}
               </select>
               <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-3.5 pointer-events-none" />

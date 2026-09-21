@@ -764,7 +764,11 @@ export const StorageService = {
       try {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          grades = parsed;
+          // Lọc bỏ cấu hình Khối 6, Khối 7... không thuộc mầm non nếu có từ trước
+          grades = parsed.filter((g) => !/^Khối\s*[6-9]\b/i.test(g.name?.trim() || ''));
+          if (grades.length === 0) {
+            grades = [...DEFAULT_PRESCHOOL_GRADES];
+          }
         } else {
           grades = [...DEFAULT_PRESCHOOL_GRADES];
         }
@@ -822,17 +826,23 @@ export const StorageService = {
       });
     }
 
-    // Only fix invalid/missing numeric grades
+    // Only fix invalid/missing numeric grades (hoặc lớp mang số khối THCS 6, 7... không thuộc mầm non)
     let hasModifiedLegacyGrades = false;
     data = data.map((c) => {
       let g = Number(c.grade);
-      if (isNaN(g) || g <= 0) {
+      if (isNaN(g) || g <= 0 || g >= 6) {
         hasModifiedLegacyGrades = true;
         const nameLower = (c.class_name || '').toLowerCase();
-        if (nameLower.startsWith('nt') || nameLower.includes('nhà trẻ') || nameLower.includes('nha tre')) {
+        if (nameLower.startsWith('nt') || nameLower.includes('nhà trẻ') || nameLower.includes('nha tre') || nameLower.includes('24-36')) {
           g = 1; // Khối Nhà trẻ
+        } else if (nameLower.includes('ghép') || nameLower.includes('ghep') || nameLower.includes('mgg') || nameLower.includes('3-5') || nameLower.includes('3+4') || nameLower.includes('4+5') || nameLower.includes('3-4')) {
+          g = 5; // Khối MG Ghép
+        } else if (nameLower.includes('bé') || nameLower.includes('be') || nameLower.includes('3t') || nameLower.includes('mầm') || nameLower.includes('mam')) {
+          g = 2; // Khối MG Bé
+        } else if (nameLower.includes('nhỡ') || nameLower.includes('nho') || nameLower.includes('chồi') || nameLower.includes('choi') || nameLower.includes('4t')) {
+          g = 3; // Khối MG Nhỡ
         } else {
-          g = 4; // Khối MG Lớn
+          g = 5; // Mặc định MG Ghép
         }
         return { ...c, grade: g };
       }

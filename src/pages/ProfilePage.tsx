@@ -9,7 +9,7 @@ interface ProfilePageProps {
 
 export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
   const { currentUser } = useAuth();
-  const { classes, settings, activeYear } = useSchool();
+  const { classes, settings, activeYear, preschoolGrades } = useSchool();
 
   const assignedClass = classes.find((c) => c.id === currentUser?.assigned_class_id);
 
@@ -85,9 +85,14 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
               <GraduationCap className="w-5 h-5 text-blue-700" />
               <div>
                 <div className="text-xs font-bold text-blue-950">
-                  Lớp chủ nhiệm: Lớp {assignedClass.class_name}
+                  Lớp chủ nhiệm: {assignedClass.class_name.trim().toLowerCase().startsWith('lớp ') ? assignedClass.class_name : `Lớp ${assignedClass.class_name}`}
                 </div>
-                <div className="text-[11px] text-blue-700">Khối {assignedClass.grade}</div>
+                {(() => {
+                  const pg = preschoolGrades?.find((p) => p.grade_num === assignedClass.grade);
+                  const isSecondary = (!pg && assignedClass.grade && assignedClass.grade >= 6) || (pg && /^Khối\s*[6-9]\b/i.test(pg.name));
+                  const label = isSecondary ? 'Khối Mẫu giáo' : (pg ? pg.name : (assignedClass.grade && assignedClass.grade < 6 ? `Khối ${assignedClass.grade}` : ''));
+                  return label ? <div className="text-[11px] text-blue-700">{label}</div> : null;
+                })()}
               </div>
             </div>
 

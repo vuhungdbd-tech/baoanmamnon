@@ -7,6 +7,7 @@ import {
   AttendancePeriodType,
   SchoolOffDay,
   ClassAttendanceRank,
+  getPreschoolGradeLabel,
 } from '../types';
 import { CampusSelector } from '../components/CampusSelector';
 import * as XLSX from 'xlsx';
@@ -64,8 +65,18 @@ interface AttendanceRankingPageProps {
 }
 
 export const AttendanceRankingPage: React.FC<AttendanceRankingPageProps> = ({ onNavigate }) => {
-  const { settings, campuses, classes, activeYear, updateSchoolSettings } = useSchool();
+  const { settings, campuses, classes, activeYear, updateSchoolSettings, preschoolGrades } = useSchool();
   const { isAdmin, isBGH, isGVCN, currentUser } = useAuth();
+
+  const getGradeDisplay = (grade?: number) => {
+    const pg = preschoolGrades?.find((p) => p.grade_num === grade);
+    if (pg && !/^Khối\s*[6-9]\b/i.test(pg.name)) {
+      return pg.name;
+    }
+    const label = getPreschoolGradeLabel(grade, false);
+    if (label) return label;
+    return grade && grade < 6 ? `Khối ${grade}` : 'Mẫu giáo';
+  };
 
   // Reference date for week 1 (default 2026-09-07 per requirement)
   const week1StartDate = settings?.week1_start_date || DEFAULT_WEEK1_START_DATE;
@@ -411,7 +422,7 @@ export const AttendanceRankingPage: React.FC<AttendanceRankingPageProps> = ({ on
         r.schoolRank,
         `Hạng ${r.campusRank}/${r.totalClassesInCampus || ''}`,
         r.classItem.class_name,
-        `Khối ${r.classItem.grade}`,
+        getGradeDisplay(r.classItem.grade),
         r.campusName || 'Khu chính',
         r.teacher?.full_name || 'Chưa phân công',
         r.enrollment,
@@ -531,7 +542,7 @@ export const AttendanceRankingPage: React.FC<AttendanceRankingPageProps> = ({ on
           cData.push([
             `Hạng ${r.campusRank}`,
             r.classItem.class_name,
-            `Khối ${r.classItem.grade}`,
+            getGradeDisplay(r.classItem.grade),
             r.teacher?.full_name || 'Chưa phân công',
             r.enrollment,
             r.validSchoolDays,
@@ -958,7 +969,7 @@ export const AttendanceRankingPage: React.FC<AttendanceRankingPageProps> = ({ on
                   {myClassRank.campusName}
                 </span>
                 <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-white/20 text-white">
-                  Khối {myClassRank.classItem.grade}
+                  {getGradeDisplay(myClassRank.classItem.grade)}
                 </span>
               </h3>
               <p className="text-xs text-emerald-100 max-w-xl">
@@ -1159,7 +1170,7 @@ export const AttendanceRankingPage: React.FC<AttendanceRankingPageProps> = ({ on
                     <h3 className="text-xl font-black text-slate-900 flex items-center gap-2">
                       <span>Lớp {item.classItem.class_name}</span>
                       <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-slate-100 text-slate-600">
-                        Khối {item.classItem.grade}
+                        {getGradeDisplay(item.classItem.grade)}
                       </span>
                     </h3>
                     <p className="text-xs text-slate-500 font-medium mt-0.5">
@@ -1476,7 +1487,7 @@ export const AttendanceRankingPage: React.FC<AttendanceRankingPageProps> = ({ on
                                 </td>
                                 <td className="py-3 px-3">
                                   <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 text-[11px] font-bold">
-                                    Khối {item.classItem.grade}
+                                    {getGradeDisplay(item.classItem.grade)}
                                   </span>
                                 </td>
                                 <td className="py-3 px-3 text-slate-700">
@@ -1720,7 +1731,7 @@ export const AttendanceRankingPage: React.FC<AttendanceRankingPageProps> = ({ on
                       </td>
                       <td className="py-3 px-3">
                         <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 text-[11px] font-bold">
-                          Khối {item.classItem.grade}
+                          {getGradeDisplay(item.classItem.grade)}
                         </span>
                       </td>
                       {settings?.enable_campuses && (

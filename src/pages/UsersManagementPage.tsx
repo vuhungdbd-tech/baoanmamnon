@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useSchool } from '../contexts/SchoolContext';
-import { Profile, UserRole, TeachingScope } from '../types';
+import { Profile, UserRole, TeachingScope, formatPreschoolClassOption } from '../types';
 import { StorageService } from '../services/storage';
 import { getTeacherAllowedScope, getClassCategory, getScopeLabel } from '../utils/preschoolPermissions';
 import { removeVietnameseTones, searchMatches } from '../utils/vietnamese';
@@ -719,13 +719,14 @@ export const UsersManagementPage: React.FC = () => {
                     >
                       <option value="">-- Chưa phân công lớp --</option>
                       {classes.map((c) => {
-                        const pg = preschoolGrades.find((p) => p.grade_num === c.grade);
                         const currentTeacher = allUsers.find(
                           (u) => u.id === c.homeroom_teacher_id && u.id !== editingUser?.id
                         );
+                        const teacherSuffix = currentTeacher ? `[Hiện tại: ${currentTeacher.full_name}]` : undefined;
+                        const label = formatPreschoolClassOption(c, preschoolGrades, teacherSuffix);
                         return (
                           <option key={c.id} value={c.id}>
-                            Lớp {c.class_name} ({pg ? `${pg.name} - ${pg.age_range}` : `Khối ${c.grade}`}) {currentTeacher ? `[Hiện tại: ${currentTeacher.full_name}]` : ''}
+                            {label}
                           </option>
                         );
                       })}

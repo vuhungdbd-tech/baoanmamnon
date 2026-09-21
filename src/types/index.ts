@@ -471,8 +471,42 @@ export function getPreschoolGradeLabel(grade?: number, full = false): string {
     case 5:
       return full ? 'Khối Mẫu giáo Ghép (3 - 6 tuổi)' : 'MG Ghép (3-6T)';
     default:
-      return full ? `Khối lớp ${grade || ''}` : `Khối ${grade || ''}`;
+      // Trong trường mầm non không có Khối 6, Khối 7...
+      if (!grade || grade >= 6) {
+        return '';
+      }
+      return full ? `Khối lớp ${grade}` : `Khối ${grade}`;
   }
+}
+
+/**
+ * Format nhãn hiển thị cho lớp học mầm non trong các dropdown chọn lớp (Lớp phụ trách, Chọn lớp điểm danh),
+ * loại bỏ hoàn toàn các từ "(Khối 6)", "(Khối 7)" không phù hợp với mầm non.
+ */
+export function formatPreschoolClassOption(
+  c: { class_name: string; grade?: number },
+  preschoolGrades?: PreschoolGradeConfig[],
+  extraSuffix?: string
+): string {
+  const pg = preschoolGrades?.find((p) => p.grade_num === c.grade);
+  let gradeTag = '';
+
+  if (pg) {
+    const name = pg.name?.trim() || '';
+    // Nếu tên khối là "Khối 6", "Khối 7"... thì bỏ hoàn toàn
+    if (!/^Khối\s*[6-9]\b/i.test(name)) {
+      gradeTag = name;
+    }
+  } else if (c.grade && c.grade < 6) {
+    gradeTag = getPreschoolGradeLabel(c.grade, false);
+  }
+
+  const rawName = (c.class_name || '').trim();
+  const classDisplay = /^lớp\s+/i.test(rawName) ? rawName : `Lớp ${rawName}`;
+  const tagPart = gradeTag ? ` (${gradeTag})` : '';
+  const suffixPart = extraSuffix ? ` ${extraSuffix}` : '';
+
+  return `${classDisplay}${tagPart}${suffixPart}`;
 }
 
 export type AttendancePeriodType = 'WEEK' | 'MONTH' | 'YEAR';
