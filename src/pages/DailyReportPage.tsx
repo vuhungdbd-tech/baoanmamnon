@@ -38,6 +38,19 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
   const isAdmin = currentUser?.role === 'ADMIN';
   const isBGH = currentUser?.role === 'BGH';
 
+  // Helper to detect Nhà Trẻ class (NT...) - declared before use in useMemo hooks
+  const isNhaTreClass = useCallback((clsName?: string, grade?: any): boolean => {
+    if (grade !== undefined && grade !== null) {
+      if (grade === 1 || grade === '1' || grade === 'NHA_TRE') return true;
+      const matchedPg = preschoolGrades?.find((p) => p.grade_num === Number(grade));
+      if (matchedPg && matchedPg.category === 'NHA_TRE') return true;
+      const gStr = typeof grade === 'string' ? grade.toUpperCase() : String(grade).toUpperCase();
+      if (gStr.includes('NHA_TRE') || gStr.includes('NHÀ TRẺ') || gStr.includes('NHA TRE')) return true;
+    }
+    const upper = (clsName ? String(clsName) : '').toUpperCase().trim();
+    return upper.startsWith('NT') || upper.includes('NHÀ TRẺ') || upper.includes('NHA TRE') || upper.includes('NHÓM TRẺ') || upper.includes('NHOM TRE');
+  }, [preschoolGrades]);
+
   const startYear = useMemo(() => {
     return parseSchoolStartYear(activeYear?.name);
   }, [activeYear?.name]);
@@ -316,10 +329,10 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
         totals.absentExcused += absEx;
         totals.absentUnexcused += ps?.absent_unexcused ?? Math.max(0, absent - absEx);
 
-        const isNT = isNhaTreClass(row.class_name, row.grade);
+        const isNT = isNhaTreClass(row.classItem?.class_name, row.classItem?.grade);
         let board = Number(ps?.boarding_count);
         if (isNaN(board) || board <= 0) {
-          if (boardingIndicator && row.values[boardingIndicator.id]?.total) {
+          if (boardingIndicator && row.values?.[boardingIndicator.id]?.total) {
             board = row.values[boardingIndicator.id].total;
           } else if (present > 0) {
             board = present;
@@ -330,8 +343,13 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
 
         let bNT = Number(ps?.boarding_nha_tre) || 0;
         let bMG = Number(ps?.boarding_mau_giao) || 0;
-        if (isNT && bNT === 0 && board > 0) bNT = board;
-        if (!isNT && bMG === 0 && board > 0) bMG = board;
+        if (isNT) {
+          if (bNT === 0 && (board > 0 || present > 0)) bNT = board > 0 ? board : present;
+          board = bNT;
+        } else {
+          if (bMG === 0 && (board > 0 || present > 0)) bMG = board > 0 ? board : present;
+          board = bMG;
+        }
 
         totals.boardingCount += board;
         totals.lunchCount += Number(ps?.lunch_count) || board;
@@ -367,7 +385,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
             totals.byYear![yr].total += Number(stats?.total) || 0;
             totals.byYear![yr].present += p;
             totals.byYear![yr].absent += Number(stats?.absent) || Math.max(0, (Number(stats?.total) || 0) - p);
-            totals.byYear![yr].boarding += b > 0 ? b : p; // Đồng bộ suất ăn với số trẻ có mặt
+            totals.byYear![yr].boarding += (b !== undefined && b !== null && b > 0) ? b : p; // Đồng bộ suất ăn với số trẻ có mặt
           });
         }
       }
@@ -376,33 +394,20 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
     totals.attendanceRate = totals.totalStudents > 0 ? (totals.presentStudents / totals.totalStudents) * 100 : 0;
     totals.boardingRate = totals.presentStudents > 0 ? (totals.boardingCount / totals.presentStudents) * 100 : 0;
     return totals;
-  }, [reportData, allIndicator, boardingIndicator, startYear]);
-
-  // Helper to detect Nhà Trẻ class (NT...)
-  const isNhaTreClass = (clsName: string, grade?: any): boolean => {
-    if (grade !== undefined && grade !== null) {
-      if (grade === 1 || grade === '1' || grade === 'NHA_TRE') return true;
-      const matchedPg = preschoolGrades?.find((p) => p.grade_num === Number(grade));
-      if (matchedPg && matchedPg.category === 'NHA_TRE') return true;
-      const gStr = typeof grade === 'string' ? grade.toUpperCase() : String(grade).toUpperCase();
-      if (gStr.includes('NHA_TRE') || gStr.includes('NHÀ TRẺ') || gStr.includes('NHA TRE')) return true;
-    }
-    const upper = (clsName ? String(clsName) : '').toUpperCase().trim();
-    return upper.startsWith('NT') || upper.includes('NHÀ TRẺ') || upper.includes('NHA TRE') || upper.includes('NHÓM TRẺ') || upper.includes('NHOM TRE');
-  };
+  }, [reportData, allIndicator, boardingIndicator, startYear, isNhaTreClass]);
 
   // Sorted classes matching the original document (All Nhà Trẻ first STT 1..13, then All Mẫu Giáo STT 14..)
   const sortedClassesForTemplate = useMemo(() => {
     if (!reportData?.rows) return [];
     const list = [...reportData.rows];
     return list.sort((a, b) => {
-      const aIsNT = isNhaTreClass(a.classItem.class_name, a.classItem.grade);
-      const bIsNT = isNhaTreClass(b.classItem.class_name, b.classItem.grade);
+      const aIsNT = isNhaTreClass(a.classItem?.class_name, a.classItem?.grade);
+      const bIsNT = isNhaTreClass(b.classItem?.class_name, b.classItem?.grade);
       if (aIsNT && !bIsNT) return -1;
       if (!aIsNT && bIsNT) return 1;
-      return (a.classItem.sort_order || 0) - (b.classItem.sort_order || 0);
+      return (a.classItem?.sort_order || 0) - (b.classItem?.sort_order || 0);
     });
-  }, [reportData?.rows]);
+  }, [reportData?.rows, isNhaTreClass]);
 
   // Subtotal for Khối Nhà Trẻ (Row 6 in the original image)
   const nhaTreSubtotal = useMemo(() => {
@@ -620,14 +625,20 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
           r.getCell('A').value = idx + 1;
           r.getCell('B').value = row.classItem.class_name;
 
-          // Ăn bán trú Nhà trẻ vs Mẫu giáo
+          // Ăn bán trú Nhà trẻ vs Mẫu giáo (đồng bộ xuất ăn bán trú với số trẻ có mặt)
           if (isNT) {
-            const b = isReported && !exportBlankTemplate ? (ps?.boarding_nha_tre ?? ps?.boarding_count ?? 0) : '';
+            let b: any = isReported && !exportBlankTemplate ? (ps?.boarding_nha_tre ?? ps?.boarding_count ?? 0) : '';
+            if (isReported && !exportBlankTemplate && (b === 0 || b === '' || b === undefined) && presentAll > 0) {
+              b = presentAll;
+            }
             r.getCell('C').value = b;
             r.getCell('D').value = '';
           } else {
             r.getCell('C').value = '';
-            const b = isReported && !exportBlankTemplate ? (ps?.boarding_mau_giao ?? ps?.boarding_count ?? 0) : '';
+            let b: any = isReported && !exportBlankTemplate ? (ps?.boarding_mau_giao ?? ps?.boarding_count ?? 0) : '';
+            if (isReported && !exportBlankTemplate && (b === 0 || b === '' || b === undefined) && presentAll > 0) {
+              b = presentAll;
+            }
             r.getCell('D').value = b;
           }
 
@@ -1585,17 +1596,17 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                 {sortedClassesForTemplate.map((row, idx) => {
                   const isReported = row.status !== 'NOT_REPORTED';
                   const ps = row.preschool || row.report?.preschool_data;
-                  const allVal = allIndicator ? row.values[allIndicator.id] : null;
-                  const totalAll = allVal?.total ?? (row.classItem.student_count || 0);
+                  const allVal = allIndicator && row.values ? row.values[allIndicator.id] : null;
+                  const totalAll = allVal?.total ?? (row.classItem?.student_count || 0);
                   const absentAll = allVal?.absent ?? ((ps?.absent_excused || 0) + (ps?.absent_unexcused || 0));
                   const presentAll = allVal?.present ?? Math.max(0, totalAll - absentAll);
-                  const isNT = isNhaTreClass(row.classItem.class_name, row.classItem.grade);
+                  const isNT = isNhaTreClass(row.classItem?.class_name, row.classItem?.grade);
 
                   let rawBoard = isNT ? (ps?.boarding_nha_tre ?? ps?.boarding_count) : (ps?.boarding_mau_giao ?? ps?.boarding_count);
                   if (isReported && (rawBoard === undefined || rawBoard === null || (Number(rawBoard) === 0 && presentAll > 0))) {
                     rawBoard = presentAll;
                   }
-                  const boardingVal = isReported ? (rawBoard ?? (boardingIndicator ? (row.values[boardingIndicator.id]?.total || 0) : 0)) : '';
+                  const boardingVal = isReported ? (rawBoard ?? (boardingIndicator && row.values ? (row.values[boardingIndicator.id]?.total || 0) : 0)) : '';
 
                   const rateStr = totalAll > 0 && isReported
                     ? ((presentAll / totalAll) * 100).toFixed(2).replace('.', ',')
@@ -1824,7 +1835,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                 {reportData?.rows.map((row, idx) => {
                   const isReported = row.status !== 'NOT_REPORTED';
                   const ps = row.preschool || row.report?.preschool_data;
-                  const allVal = allIndicator ? row.values[allIndicator.id] : null;
+                  const allVal = allIndicator && row.values ? row.values[allIndicator.id] : null;
 
                   const totalAll = ps?.female_count !== undefined && (allVal?.total ?? 0) === 0
                     ? ((ps.female_count || 0) + (ps.ethnic_count || 0))
@@ -1832,7 +1843,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
 
                   const absentAll = allVal?.absent ?? ((ps?.absent_excused || 0) + (ps?.absent_unexcused || 0));
                   const presentAll = allVal?.present ?? Math.max(0, totalAll - absentAll);
-                  const isNT = isNhaTreClass(row.classItem.class_name, row.classItem.grade);
+                  const isNT = isNhaTreClass(row.classItem?.class_name, row.classItem?.grade);
 
                   const totalNT = ps?.total_nha_tre ?? (isNT ? totalAll : 0);
                   const presentNT = ps?.present_nha_tre ?? (isNT ? presentAll : 0);
@@ -2081,7 +2092,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                 {reportData?.rows.map((row, idx) => {
                   const isReported = row.status !== 'NOT_REPORTED';
                   const ps = row.preschool || row.report?.preschool_data;
-                  const allVal = allIndicator ? row.values[allIndicator.id] : null;
+                  const allVal = allIndicator && row.values ? row.values[allIndicator.id] : null;
 
                   const totalAll = ps?.female_count !== undefined && (allVal?.total ?? 0) === 0
                     ? ((ps.female_count || 0) + (ps.ethnic_count || 0))
@@ -2102,7 +2113,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                   const absentExcused = ps?.absent_excused ?? (row.report?.absent_students?.filter((s: any) => s.is_excused).length || 0);
                   const absentUnexcused = ps?.absent_unexcused ?? Math.max(0, absentAll - absentExcused);
 
-                  const boardingCount = ps?.boarding_count ?? (boardingIndicator ? (row.values[boardingIndicator.id]?.total || 0) : 0);
+                  const boardingCount = ps?.boarding_count ?? (boardingIndicator && row.values ? (row.values[boardingIndicator.id]?.total || 0) : 0);
                   const lunchCount = ps?.lunch_count ?? boardingCount;
                   const snackCount = ps?.snack_count ?? boardingCount;
                   const canceledCount = ps?.canceled_count ?? 0;
@@ -2340,8 +2351,8 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                 {reportData?.rows.map((row) => {
                   const isReported = row.status !== 'NOT_REPORTED';
 
-                  const allVal = allIndicator ? row.values[allIndicator.id] : null;
-                  const boardingVal = boardingIndicator ? row.values[boardingIndicator.id] : null;
+                  const allVal = allIndicator && row.values ? row.values[allIndicator.id] : null;
+                  const boardingVal = boardingIndicator && row.values ? row.values[boardingIndicator.id] : null;
 
                   const totalAll = allVal?.total ?? 0;
                   const absentAll = allVal?.absent ?? 0;

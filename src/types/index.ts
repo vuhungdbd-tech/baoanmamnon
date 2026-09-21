@@ -2,7 +2,7 @@ export type UserRole = 'ADMIN' | 'BGH' | 'GVCN';
 
 export type TeachingScope = 'ALL' | 'NHA_TRE' | 'MAU_GIAO';
 
-export type InputCalculationMode = 'MODE_1_TOTAL_PRESENT' | 'MODE_2_TOTAL_ABSENT' | 'MODE_3_ALL_THREE';
+export type InputCalculationMode = 'MODE_1_TOTAL_PRESENT' | 'MODE_2_TOTAL_ABSENT' | 'MODE_3_ALL_THREE' | 'MODE_3_STRICT_ALL';
 
 export type ReportStatus = 'NOT_REPORTED' | 'REPORTED' | 'LOCKED';
 
@@ -86,6 +86,7 @@ export interface ClassItem {
   active: boolean;
   is_locked?: boolean;
   sort_order?: number;
+  student_count?: number;
   created_at: string;
 }
 

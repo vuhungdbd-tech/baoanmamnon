@@ -17,6 +17,7 @@ import { SettingsIndicatorsPage } from './pages/SettingsIndicatorsPage';
 import { SettingsReportTemplatePage } from './pages/SettingsReportTemplatePage';
 import { SettingsSupabasePage } from './pages/SettingsSupabasePage';
 import { ProfilePage } from './pages/ProfilePage';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Heart, School, ShieldAlert, Sparkles, BarChart3, ClipboardList, FileSpreadsheet, User, Code2 } from 'lucide-react';
 
 const AppContent: React.FC = () => {
@@ -85,53 +86,55 @@ const AppContent: React.FC = () => {
 
       {/* Main Content Area - Optimized spacing for phones */}
       <main className="flex-1 max-w-[1600px] w-full mx-auto px-3 sm:px-6 lg:px-8 py-3.5 sm:py-8">
-        {currentPath === '/dashboard' && (
-          <DashboardPage
-            onNavigate={handleNavigate}
-            onSelectClassForInput={handleSelectClassForInput}
-          />
-        )}
+        <ErrorBoundary fallbackTitle="Không thể hiển thị trang">
+          {currentPath === '/dashboard' && (
+            <DashboardPage
+              onNavigate={handleNavigate}
+              onSelectClassForInput={handleSelectClassForInput}
+            />
+          )}
 
-        {currentPath === '/attendance' && (
-          <AttendanceInputPage
-            initialClassId={selectedClassForInput.classId}
-            initialDate={selectedClassForInput.date}
-            onSavedSuccess={() => {
-              // Optional callback
-            }}
-            onNavigate={handleNavigate}
-          />
-        )}
+          {currentPath === '/attendance' && (
+            <AttendanceInputPage
+              initialClassId={selectedClassForInput.classId}
+              initialDate={selectedClassForInput.date}
+              onSavedSuccess={() => {
+                // Optional callback
+              }}
+              onNavigate={handleNavigate}
+            />
+          )}
 
-        {(currentPath === '/reports/daily' || currentPath === '/daily-report' || currentPath === '/reports') && (
-          <DailyReportPage onNavigate={handleNavigate} />
-        )}
+          {(currentPath === '/reports/daily' || currentPath === '/daily-report' || currentPath === '/reports') && (
+            <DailyReportPage onNavigate={handleNavigate} />
+          )}
 
-        {currentPath === '/reports/monthly' && (
-          <MonthlyReportPage onNavigate={handleNavigate} />
-        )}
+          {currentPath === '/reports/monthly' && (
+            <MonthlyReportPage onNavigate={handleNavigate} />
+          )}
 
-        {currentPath === '/reports/ranking' && (
-          <AttendanceRankingPage onNavigate={handleNavigate} />
-        )}
+          {currentPath === '/reports/ranking' && (
+            <AttendanceRankingPage onNavigate={handleNavigate} />
+          )}
 
-        {currentPath === '/charts' && <ChartsPage />}
+          {currentPath === '/charts' && <ChartsPage />}
 
-        {currentPath === '/classes' && <ClassesManagementPage />}
+          {currentPath === '/classes' && <ClassesManagementPage />}
 
-        {currentPath === '/users' && <UsersManagementPage />}
+          {currentPath === '/users' && <UsersManagementPage />}
 
-        {currentPath === '/settings/school' && <SettingsSchoolPage />}
+          {currentPath === '/settings/school' && <SettingsSchoolPage />}
 
-        {currentPath === '/settings/campuses' && <SettingsCampusesPage />}
+          {currentPath === '/settings/campuses' && <SettingsCampusesPage />}
 
-        {currentPath === '/settings/indicators' && <SettingsIndicatorsPage />}
+          {currentPath === '/settings/indicators' && <SettingsIndicatorsPage />}
 
-        {currentPath === '/settings/report-template' && <SettingsReportTemplatePage />}
+          {currentPath === '/settings/report-template' && <SettingsReportTemplatePage />}
 
-        {currentPath === '/settings/supabase' && <SettingsSupabasePage />}
+          {currentPath === '/settings/supabase' && <SettingsSupabasePage />}
 
-        {currentPath === '/profile' && <ProfilePage onNavigate={handleNavigate} />}
+          {currentPath === '/profile' && <ProfilePage onNavigate={handleNavigate} />}
+        </ErrorBoundary>
       </main>
 
       {/* App Footer (Hidden when printing reports) */}
