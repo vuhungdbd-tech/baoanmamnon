@@ -1870,16 +1870,18 @@ export const StorageService = {
     const rawValues = localStorage.getItem(STORAGE_KEYS.VALUES);
     const allValues: DailyReportValue[] = rawValues ? JSON.parse(rawValues) : [];
 
-    let activeClasses = classes.filter((c) => c.active);
+    let activeClasses = (classes || []).filter((c) => c && c.active);
     if (campusId && campusId !== 'all') {
-      activeClasses = activeClasses.filter(c => c.campus_id === campusId);
+      activeClasses = activeClasses.filter(c => c && c.campus_id === campusId);
     }
     const totalClasses = activeClasses.length;
 
     let reportedClasses = 0;
     const totals: Record<string, { total: number; present: number; absent: number; rate: number }> = {};
-    indicators.forEach((ig) => {
-      totals[ig.id] = { total: 0, present: 0, absent: 0, rate: 0 };
+    (indicators || []).forEach((ig) => {
+      if (ig && ig.id) {
+        totals[ig.id] = { total: 0, present: 0, absent: 0, rate: 0 };
+      }
     });
 
     const preschoolTotals: PreschoolSchoolTotals = {
@@ -1947,6 +1949,9 @@ export const StorageService = {
         values[ig.id] = { total, present, absent, rate };
 
         if (isReported) {
+          if (!totals[ig.id]) {
+            totals[ig.id] = { total: 0, present: 0, absent: 0, rate: 0 };
+          }
           totals[ig.id].total += total;
           totals[ig.id].present += present;
           totals[ig.id].absent += absent;
@@ -2010,6 +2015,11 @@ export const StorageService = {
       }
 
       return {
+        classId: cls.id,
+        className: cls.class_name,
+        grade: cls.grade,
+        campusId: cls.campus_id,
+        teacherName: teacher?.full_name || 'Chưa phân công',
         classItem: cls,
         teacher,
         report: rep,
@@ -2021,9 +2031,12 @@ export const StorageService = {
       };
     });
 
-    indicators.forEach((ig) => {
+    (indicators || []).forEach((ig) => {
+      if (!ig) return;
       const t = totals[ig.id];
-      t.rate = t.total > 0 ? (t.absent / t.total) * 100 : 0;
+      if (t) {
+        t.rate = t.total > 0 ? (t.absent / t.total) * 100 : 0;
+      }
     });
 
     const mainIndicator = indicators.find((i) => i.code === 'ALL') || indicators[0];

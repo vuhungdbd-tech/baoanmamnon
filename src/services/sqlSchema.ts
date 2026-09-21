@@ -120,6 +120,7 @@ CREATE TABLE IF NOT EXISTS public.daily_reports (
     notes TEXT,
     absent_students JSONB DEFAULT '[]'::jsonb,
     reported_time TEXT,
+    preschool_data JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
     locked_at TIMESTAMPTZ,
@@ -225,6 +226,10 @@ BEGIN
 
     BEGIN
         ALTER TABLE public.daily_reports ADD COLUMN reported_time TEXT;
+    EXCEPTION WHEN duplicate_column THEN END;
+
+    BEGIN
+        ALTER TABLE public.daily_reports ADD COLUMN preschool_data JSONB DEFAULT '{}'::jsonb;
     EXCEPTION WHEN duplicate_column THEN END;
 
     BEGIN

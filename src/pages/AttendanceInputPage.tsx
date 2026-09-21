@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useSchool } from '../contexts/SchoolContext';
 import { StorageService } from '../services/storage';
@@ -48,6 +48,7 @@ import {
   Users,
   Layers,
   Sparkle,
+  RefreshCw,
 } from 'lucide-react';
 
 interface AttendanceInputPageProps {
@@ -172,6 +173,9 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
   const [notes, setNotes] = useState<string>('');
   const [absentStudents, setAbsentStudents] = useState<AbsentStudent[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const isFormDirtyRef = useRef<boolean>(false);
+  const loadedClassDateRef = useRef<string>('');
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [quickFillNotice, setQuickFillNotice] = useState<string>('');
@@ -372,14 +376,41 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
     setSaveSuccess(false);
   }, [selectedClassId, reportDate]);
 
+  const enabledIndicatorIds = useMemo(
+    () => enabledIndicators.map((ig) => ig.id).join(','),
+    [enabledIndicators]
+  );
+
+  // Auto-save draft locally so concurrent tabs or accidental reloads never lose teacher's inputs
+  useEffect(() => {
+    if (loading || !selectedClassId || !reportDate || !isFormDirtyRef.current) return;
+    try {
+      const draftKey = `sso_draft_${selectedClassId}_${reportDate}`;
+      const draftData = {
+        formValues,
+        preschoolData,
+        absentStudents,
+        notes,
+        timestamp: Date.now(),
+      };
+      sessionStorage.setItem(draftKey, JSON.stringify(draftData));
+    } catch (e) {
+      // Ignore storage errors
+    }
+  }, [formValues, preschoolData, absentStudents, notes, loading, selectedClassId, reportDate]);
+
   // Auto sync boarding indicator group when preschool boarding counts change to avoid blank indicator error
   useEffect(() => {
+    if (loading) return;
+    const bPresent = preschoolData.boarding_count || 0;
+    const bAbsent = preschoolData.canceled_count || 0;
+    const bTotal = bPresent + bAbsent;
+
+    // Do NOT overwrite with zeroes if user hasn't typed boarding numbers yet
+    if (bTotal <= 0) return;
+
     const boardingIg = enabledIndicators.find((ig) => ig.name.toLowerCase().includes('bán trú'));
     if (boardingIg) {
-      const bPresent = preschoolData.boarding_count || 0;
-      const bAbsent = preschoolData.canceled_count || 0;
-      const bTotal = bPresent + bAbsent;
-
       setFormValues((prev) => {
         const cur = prev[boardingIg.id];
         if (
@@ -400,11 +431,17 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
         return prev;
       });
     }
-  }, [preschoolData.boarding_count, preschoolData.canceled_count, enabledIndicators]);
+  }, [preschoolData.boarding_count, preschoolData.canceled_count, enabledIndicators, loading]);
 
   // Load existing report for this class and date
   useEffect(() => {
     if (!selectedClassId || !reportDate) return;
+
+    const currentKey = `${selectedClassId}_${reportDate}`;
+    // If this class and date was already loaded and user has made dirty edits, do not reload and wipe out inputs!
+    if (loadedClassDateRef.current === currentKey && isFormDirtyRef.current) {
+      return;
+    }
 
     setLoading(true);
     setErrorMessage('');
@@ -412,6 +449,8 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
 
     StorageService.getDailyReport(selectedClassId, reportDate)
       .then(async ({ report, values }) => {
+        loadedClassDateRef.current = currentKey;
+        isFormDirtyRef.current = false;
         setExistingReport(report || null);
         setNotes(report?.notes || '');
         setAbsentStudents(report?.absent_students || []);
@@ -617,7 +656,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
         }
       })
       .finally(() => setLoading(false));
-  }, [selectedClassId, reportDate, enabledIndicators, isAdmin, selectedClass?.is_locked]);
+  }, [selectedClassId, reportDate, enabledIndicatorIds, isAdmin, selectedClass?.is_locked]);
 
   // Đồng bộ tự động danh sách học sinh vắng theo số lượng vắng
   const syncAbsentListToCount = (targetCount: number) => {
@@ -657,94 +696,93 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
     field: 'total' | 'present' | 'absent',
     rawVal: string
   ) => {
-    setFormValues((prev) => {
-      const current = prev[groupId] || { total: 0, present: 0, absent: 0 };
-      // Strip leading zeros unless the value is '0'
-      const displayVal = rawVal.replace(/^0+(?!$)/, '');
-      const next: GroupInputState = { ...current, [field]: displayVal };
+    isFormDirtyRef.current = true;
+    const current = formValues[groupId] || { total: 0, present: 0, absent: 0 };
+    // Strip leading zeros unless the value is '0'
+    const displayVal = rawVal.replace(/^0+(?!$)/, '');
+    const next: GroupInputState = { ...current, [field]: displayVal };
 
-      // Calculate based on numbers
-      let total = parseInt(String(next.total) || '0', 10);
-      let present = parseInt(String(next.present) || '0', 10);
-      let absent = parseInt(String(next.absent) || '0', 10);
-      
-      if (field === 'total') {
-        if (typeof current.absent === 'number' && current.absent <= total) {
-          present = total - absent;
-        } else if (typeof current.present === 'number' && current.present <= total) {
-          absent = total - present;
-        } else {
-          present = total;
-          absent = 0;
+    // Calculate based on numbers
+    let total = parseInt(String(next.total) || '0', 10);
+    let present = parseInt(String(next.present) || '0', 10);
+    let absent = parseInt(String(next.absent) || '0', 10);
+    
+    if (field === 'total') {
+      if (typeof current.absent === 'number' && current.absent <= total) {
+        present = total - absent;
+      } else if (typeof current.present === 'number' && current.present <= total) {
+        absent = total - present;
+      } else {
+        present = total;
+        absent = 0;
+      }
+    } else if (field === 'present') {
+      absent = Math.max(0, total - present);
+    } else if (field === 'absent') {
+      present = Math.max(0, total - absent);
+    }
+    
+    next.total = total;
+    next.present = present;
+    next.absent = absent;
+
+    setFormValues((prev) => ({
+      ...prev,
+      [groupId]: next,
+    }));
+
+    // Tự động lập danh sách học sinh vắng nếu là nhóm chỉ tiêu chính (Sĩ số trường / lớp)
+    if (groupId === enabledIndicators[0]?.id && typeof next.absent === 'number') {
+      syncAbsentListToCount(next.absent);
+
+      // ĐỒNG BỘ MẦM NON: SỐ HS CÓ MẶT ĐỒNG BỘ VỚI XUẤT ĂN BÁN TRÚ
+      setPreschoolData((prevPs) => {
+        const stats = { ...(prevPs.age_stats || createDefaultAgeStats()) };
+        const activeYears = Object.keys(stats).filter((yr) => (stats[yr].total || 0) > 0);
+        let targetYear = activeYears.length === 1 ? activeYears[0] : '';
+        if (!targetYear) {
+          targetYear = getDefaultCohortYear(selectedClass?.class_name, selectedClass?.grade);
         }
-      } else if (field === 'present') {
-        absent = Math.max(0, total - present);
-      } else if (field === 'absent') {
-        present = Math.max(0, total - absent);
-      }
-      
-      next.total = total;
-      next.present = present;
-      next.absent = absent;
 
-      // Tự động lập danh sách học sinh vắng nếu là nhóm chỉ tiêu chính (Sĩ số trường / lớp)
-      if (groupId === enabledIndicators[0]?.id && typeof next.absent === 'number') {
-        syncAbsentListToCount(next.absent);
-
-        // ĐỒNG BỘ MẦM NON: SỐ HS CÓ MẶT ĐỒNG BỘ VỚI XUẤT ĂN BÁN TRÚ
-        setPreschoolData((prevPs) => {
-          const stats = { ...(prevPs.age_stats || createDefaultAgeStats()) };
-          const activeYears = Object.keys(stats).filter((yr) => (stats[yr].total || 0) > 0);
-          let targetYear = activeYears.length === 1 ? activeYears[0] : '';
-          if (!targetYear) {
-            targetYear = getDefaultCohortYear(selectedClass?.class_name, selectedClass?.grade);
-          }
-
-          if (targetYear && stats[targetYear]) {
-            stats[targetYear] = {
-              total: total > 0 ? total : (stats[targetYear].total || total),
-              present: present,
-              absent: absent,
-              boarding: present, // Suất ăn = Số có mặt
-            };
-          }
-
-          const isNTClass = isNhaTreClass(selectedClass?.class_name, selectedClass?.grade);
-          const bNT = isNTClass ? present : (prevPs.boarding_nha_tre || 0);
-          const bMG = !isNTClass ? present : (prevPs.boarding_mau_giao || 0);
-
-          return {
-            ...prevPs,
-            age_stats: stats,
-            total_nha_tre: isNTClass ? (total > 0 ? total : prevPs.total_nha_tre) : prevPs.total_nha_tre,
-            total_mau_giao: !isNTClass ? (total > 0 ? total : prevPs.total_mau_giao) : prevPs.total_mau_giao,
-            present_nha_tre: isNTClass ? present : prevPs.present_nha_tre,
-            present_mau_giao: !isNTClass ? present : prevPs.present_mau_giao,
-            absent_nha_tre: isNTClass ? absent : prevPs.absent_nha_tre,
-            absent_mau_giao: !isNTClass ? absent : prevPs.absent_mau_giao,
-            boarding_nha_tre: bNT,
-            boarding_mau_giao: bMG,
-            lunch_nha_tre: bNT,
-            lunch_mau_giao: bMG,
-            snack_nha_tre: bNT,
-            snack_mau_giao: bMG,
-            boarding_count: present,
-            lunch_count: present,
-            snack_count: present,
-            canceled_count: absent,
-            present_female_count: Math.min(prevPs.female_count || 0, present),
-            present_ethnic_count: Math.min(prevPs.ethnic_count || 0, present),
-            absent_excused: absent,
-            absent_unexcused: 0,
+        if (targetYear && stats[targetYear]) {
+          stats[targetYear] = {
+            total: total > 0 ? total : (stats[targetYear].total || total),
+            present: present,
+            absent: absent,
+            boarding: present, // Suất ăn = Số có mặt
           };
-        });
-      }
+        }
 
-      return {
-        ...prev,
-        [groupId]: next,
-      };
-    });
+        const isNTClass = isNhaTreClass(selectedClass?.class_name, selectedClass?.grade);
+        const bNT = isNTClass ? present : (prevPs.boarding_nha_tre || 0);
+        const bMG = !isNTClass ? present : (prevPs.boarding_mau_giao || 0);
+
+        return {
+          ...prevPs,
+          age_stats: stats,
+          total_nha_tre: isNTClass ? (total > 0 ? total : prevPs.total_nha_tre) : prevPs.total_nha_tre,
+          total_mau_giao: !isNTClass ? (total > 0 ? total : prevPs.total_mau_giao) : prevPs.total_mau_giao,
+          present_nha_tre: isNTClass ? present : prevPs.present_nha_tre,
+          present_mau_giao: !isNTClass ? present : prevPs.present_mau_giao,
+          absent_nha_tre: isNTClass ? absent : prevPs.absent_nha_tre,
+          absent_mau_giao: !isNTClass ? absent : prevPs.absent_mau_giao,
+          boarding_nha_tre: bNT,
+          boarding_mau_giao: bMG,
+          lunch_nha_tre: bNT,
+          lunch_mau_giao: bMG,
+          snack_nha_tre: bNT,
+          snack_mau_giao: bMG,
+          boarding_count: present,
+          lunch_count: present,
+          snack_count: present,
+          canceled_count: absent,
+          present_female_count: Math.min(prevPs.female_count || 0, present),
+          present_ethnic_count: Math.min(prevPs.ethnic_count || 0, present),
+          absent_excused: absent,
+          absent_unexcused: 0,
+        };
+      });
+    }
   };
 
   // Quick increment/decrement helper for mobile with >= 44px touch targets
@@ -935,6 +973,11 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
     field: 'total' | 'present' | 'absent' | 'boarding',
     val: number
   ) => {
+    isFormDirtyRef.current = true;
+    let computedGrandTotal = 0;
+    let computedGrandPresent = 0;
+    let computedGrandAbsent = 0;
+
     setPreschoolData((prev) => {
       const stats = { ...(prev.age_stats || createDefaultAgeStats()) };
       const cur = stats[year] || { total: 0, present: 0, absent: 0, boarding: 0 };
@@ -1019,23 +1062,9 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
       const grandAbsent = absNT + absMG;
       const grandBoarding = boardNT + boardMG;
 
-      // Tự động đồng bộ sang ô nhập chung nếu tổng độ tuổi > 0
-      if (grandTotal > 0 && enabledIndicators[0]) {
-        const mainId = enabledIndicators[0].id;
-        setFormValues((prevMap) => ({
-          ...prevMap,
-          [mainId]: {
-            total: grandTotal,
-            present: grandPresent,
-            absent: grandAbsent,
-          },
-        }));
-      }
-
-      // Tự động đồng bộ danh sách học sinh vắng nếu có
-      if (enabledIndicators[0]) {
-        syncAbsentListToCount(grandAbsent);
-      }
+      computedGrandTotal = grandTotal;
+      computedGrandPresent = grandPresent;
+      computedGrandAbsent = grandAbsent;
 
       return {
         ...prev,
@@ -1062,6 +1091,24 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
         present_ethnic_count: Math.min(prev.ethnic_count || 0, grandPresent),
       };
     });
+
+    // Tự động đồng bộ sang ô nhập chung ngoài updater
+    if (computedGrandTotal > 0 && enabledIndicators[0]) {
+      const mainId = enabledIndicators[0].id;
+      setFormValues((prevMap) => ({
+        ...prevMap,
+        [mainId]: {
+          total: computedGrandTotal,
+          present: computedGrandPresent,
+          absent: computedGrandAbsent,
+        },
+      }));
+    }
+
+    // Tự động đồng bộ danh sách học sinh vắng nếu có
+    if (enabledIndicators[0]) {
+      syncAbsentListToCount(computedGrandAbsent);
+    }
   };
 
   // Đồng bộ nhanh báo ăn bằng số trẻ có mặt theo từng độ tuổi
@@ -1590,6 +1637,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
   // Handle Save
   const handleSave = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (isSaving) return;
     setErrorMessage('');
 
     if (!isClassPermitted) {
@@ -1623,6 +1671,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
 
     if (!currentUser) return;
 
+    setIsSaving(true);
     try {
       const payload: Record<string, { total: number; present: number; absent: number }> = {};
       enabledIndicators.forEach((ig) => {
@@ -1644,6 +1693,12 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
         preschoolData
       );
 
+      // Successfully saved - mark clean and remove draft
+      isFormDirtyRef.current = false;
+      try {
+        sessionStorage.removeItem(`sso_draft_${selectedClassId}_${reportDate}`);
+      } catch (e) {}
+
       setExistingReport(res.report);
       setSaveSuccess(true);
       setIsEditMode(true);
@@ -1657,6 +1712,8 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
     } catch (err: any) {
       console.error('Error saving report:', err);
       setErrorMessage(err?.message || 'Không thể lưu báo cáo. Vui lòng kiểm tra lại số liệu.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -3221,16 +3278,24 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
             <div className="flex items-center gap-3">
               <button
                 type="submit"
-                disabled={!isValid}
+                disabled={!isValid || isSaving}
                 className={`flex-1 h-12 rounded-2xl text-base font-black transition-all flex items-center justify-center gap-2 ${
-                  isValid
+                  isSaving
+                    ? 'text-white bg-blue-500 cursor-wait'
+                    : isValid
                     ? 'text-white bg-blue-600 hover:bg-blue-700 shadow-lg hover:shadow-xl focus:ring-4 focus:ring-blue-300 active:scale-99 cursor-pointer'
                     : 'text-slate-500 bg-slate-200 border border-slate-300 cursor-not-allowed opacity-80'
                 }`}
               >
-                <Send className="w-5 h-5" />
+                {isSaving ? (
+                  <RefreshCw className="w-5 h-5 animate-spin" />
+                ) : (
+                  <Send className="w-5 h-5" />
+                )}
                 <span>
-                  {isValid
+                  {isSaving
+                    ? 'ĐANG GỬI BÁO CÁO...'
+                    : isValid
                     ? (existingReport ? 'CẬP NHẬT BÁO CÁO SĨ SỐ' : 'GỬI BÁO CÁO SĨ SỐ')
                     : 'VUI LÒNG NHẬP ĐỦ SỐ LIỆU ĐỂ GỬI BÁO CÁO'}
                 </span>
@@ -3296,16 +3361,24 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
                 <button
                   type="button"
                   onClick={() => handleSave()}
-                  disabled={!isValid}
+                  disabled={!isValid || isSaving}
                   className={`h-11 px-4 rounded-xl font-black text-xs sm:text-sm shadow-md flex items-center justify-center gap-2 flex-1 max-w-[240px] whitespace-nowrap transition-all ${
-                    isValid
+                    isSaving
+                      ? 'bg-blue-500 text-white cursor-wait'
+                      : isValid
                       ? 'bg-blue-600 hover:bg-blue-700 active:scale-95 text-white'
                       : 'bg-slate-200 text-slate-500 border border-slate-300 cursor-not-allowed opacity-80'
                   }`}
                 >
-                  <Send className="w-4 h-4 flex-shrink-0" />
+                  {isSaving ? (
+                    <RefreshCw className="w-4 h-4 flex-shrink-0 animate-spin" />
+                  ) : (
+                    <Send className="w-4 h-4 flex-shrink-0" />
+                  )}
                   <span>
-                    {isValid
+                    {isSaving
+                      ? 'ĐANG GỬI...'
+                      : isValid
                       ? (existingReport ? 'CẬP NHẬT BÁO CÁO' : 'GỬI BÁO CÁO')
                       : 'CHƯA NHẬP ĐỦ SỐ LIỆU'}
                   </span>

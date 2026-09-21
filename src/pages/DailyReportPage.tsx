@@ -56,8 +56,9 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
   }, [activeYear?.name]);
 
   // Năm sinh tịnh tiến theo Năm học:
-  // Nhà trẻ: startYear - 1, startYear - 2
+  // Nhà trẻ: startYear (< 1T), startYear - 1 (1-2T), startYear - 2 (2-3T)
   // Mẫu giáo: startYear - 3 (3-4T Bé), startYear - 4 (4-5T Nhỡ), startYear - 5 (5-6T Lớn)
+  const yNt0 = String(startYear);
   const yNt1 = String(startYear - 1);
   const yNt2 = String(startYear - 2);
   const yMgBe = String(startYear - 3);
@@ -242,7 +243,9 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
   }, [selectedCampusId, campuses, settings]);
 
   const enabledIndicators = useMemo(() => {
-    return indicators.filter((i) => i.enabled).sort((a, b) => a.sort_order - b.sort_order);
+    return (indicators || [])
+      .filter((i) => i && (i.enabled || (i as any).is_active))
+      .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   }, [indicators]);
 
   // 1. Group 1: Học sinh toàn trường (id: ig_all hoặc code: ALL hoặc chỉ tiêu đầu tiên)
@@ -253,7 +256,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
   // 2. Group 2: Học sinh bán trú (id: ig_boarding_half hoặc code: BOARDING_HALF hoặc có chứa chữ bán trú)
   const boardingIndicator = useMemo(() => {
     return enabledIndicators.find(
-      (i) => i.code === 'BOARDING_HALF' || i.id === 'ig_boarding_half' || i.name.toLowerCase().includes('bán trú')
+      (i) => i.code === 'BOARDING_HALF' || i.id === 'ig_boarding_half' || (i.name || '').toLowerCase().includes('bán trú')
     ) || enabledIndicators[1];
   }, [enabledIndicators]);
 
@@ -301,13 +304,15 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
       },
     };
 
-    if (!reportData) return totals;
+    if (!reportData || !reportData.rows) return totals;
 
     reportData.rows.forEach((row) => {
+      if (!row) return;
       const isReported = row.status !== 'NOT_REPORTED';
       const ps = row.preschool || row.report?.preschool_data;
-      const allVal = allIndicator ? row.values[allIndicator.id] : null;
-      const total = allVal?.total ?? (row.classItem.student_count || 0);
+      const allVal = allIndicator && row.values ? row.values[allIndicator.id] : null;
+      const cls = row.classItem;
+      const total = allVal?.total ?? (cls?.student_count || 0);
       const absent = allVal?.absent ?? ((ps?.absent_excused || 0) + (ps?.absent_unexcused || 0));
       const present = allVal?.present ?? Math.max(0, total - absent);
 
@@ -399,19 +404,22 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
   // Sorted classes matching the original document (All Nhà Trẻ first STT 1..13, then All Mẫu Giáo STT 14..)
   const sortedClassesForTemplate = useMemo(() => {
     if (!reportData?.rows) return [];
-    const list = [...reportData.rows];
+    const list = reportData.rows.filter((r) => r && (r.classItem || (r as any).className));
     return list.sort((a, b) => {
-      const aIsNT = isNhaTreClass(a.classItem?.class_name, a.classItem?.grade);
-      const bIsNT = isNhaTreClass(b.classItem?.class_name, b.classItem?.grade);
+      const clsA = a.classItem;
+      const clsB = b.classItem;
+      const aIsNT = isNhaTreClass(clsA?.class_name || (a as any).className, clsA?.grade ?? (a as any).grade);
+      const bIsNT = isNhaTreClass(clsB?.class_name || (b as any).className, clsB?.grade ?? (b as any).grade);
       if (aIsNT && !bIsNT) return -1;
       if (!aIsNT && bIsNT) return 1;
-      return (a.classItem?.sort_order || 0) - (b.classItem?.sort_order || 0);
+      return (clsA?.sort_order || 0) - (clsB?.sort_order || 0);
     });
   }, [reportData?.rows, isNhaTreClass]);
 
   // Subtotal for Khối Nhà Trẻ (Row 6 in the original image)
   const nhaTreSubtotal = useMemo(() => {
     let boardingNT = 0;
+    let yNt0Val = 0;
     let yNt1Val = 0;
     let yNt2Val = 0;
     let present = 0;
@@ -419,35 +427,41 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
     let sickCount = 0;
 
     sortedClassesForTemplate.forEach((row) => {
-      if (!isNhaTreClass(row.classItem.class_name, row.classItem.grade)) return;
+      if (!row) return;
+      const cls = row.classItem;
+      const clsName = cls?.class_name || (row as any).className;
+      const clsGrade = cls?.grade ?? (row as any).grade;
+      if (!isNhaTreClass(clsName, clsGrade)) return;
       const isReported = row.status !== 'NOT_REPORTED';
       const ps = row.preschool || row.report?.preschool_data;
-      const allVal = allIndicator ? row.values[allIndicator.id] : null;
-      const rowTotal = allVal?.total ?? (row.classItem.student_count || 0);
+      const allVal = allIndicator && row.values ? row.values[allIndicator.id] : null;
+      const rowTotal = allVal?.total ?? (cls?.student_count || 0);
       const rowAbsent = allVal?.absent ?? ((ps?.absent_excused || 0) + (ps?.absent_unexcused || 0));
       const rowPresent = allVal?.present ?? Math.max(0, rowTotal - rowAbsent);
 
       total += rowTotal;
       if (isReported) {
         present += rowPresent;
-        const b = ps?.boarding_nha_tre ?? ps?.boarding_count ?? (boardingIndicator ? (row.values[boardingIndicator.id]?.total || 0) : 0);
+        const b = ps?.boarding_nha_tre ?? ps?.boarding_count ?? (boardingIndicator && row.values ? (row.values[boardingIndicator.id]?.total || 0) : 0);
         boardingNT += b;
 
+        const stNt0 = ps?.age_stats?.[yNt0];
         const stNt1 = ps?.age_stats?.[yNt1];
         const stNt2 = ps?.age_stats?.[yNt2];
+        yNt0Val += Number(stNt0?.present ?? stNt0?.total ?? 0);
         yNt1Val += Number(stNt1?.present ?? stNt1?.total ?? 0);
         yNt2Val += Number(stNt2?.present ?? stNt2?.total ?? 0);
 
         const sick = (ps?.health_issue_count || 0) + (row.report?.absent_students?.filter((s: any) => {
-          const r = (s.reason || '').toLowerCase();
+          const r = (s?.reason || '').toLowerCase();
           return r.includes('ốm') || r.includes('viện') || r.includes('sốt') || r.includes('bệnh');
         }).length || 0);
         sickCount += sick;
       }
     });
 
-    return { boardingNT, yNt1Val, yNt2Val, present, total, sickCount };
-  }, [sortedClassesForTemplate, allIndicator, boardingIndicator, yNt1, yNt2]);
+    return { boardingNT, yNt0Val, yNt1Val, yNt2Val, present, total, sickCount };
+  }, [sortedClassesForTemplate, allIndicator, boardingIndicator, yNt0, yNt1, yNt2, isNhaTreClass]);
 
   // Handle Print
   const handlePrint = () => {
@@ -489,9 +503,10 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
   // Helper to extract absent student addresses matched to names
   const getAbsentStudentAddresses = (row: ClassReportRow): string => {
     if (row.report?.absent_students && row.report.absent_students.length > 0) {
+      const classId = row.classItem?.id || (row as any).classId || '';
       return row.report.absent_students
         .map((s) => {
-          const addr = getResolvedAddress(s, row.classItem.id);
+          const addr = getResolvedAddress(s, classId);
           return addr && addr.trim() !== '' ? addr : '-';
         })
         .join('\n'); // Using newline for better visual alignment in multi-line cells
@@ -537,17 +552,18 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
           },
         });
 
-        // 13 cột chuẩn theo hình ảnh gốc
+        // 14 cột chuẩn theo hình ảnh gốc (đã bổ sung cột trẻ sinh năm yNt0)
         ws.columns = [
           { key: 'stt', width: 6 },
           { key: 'class', width: 26 },
           { key: 'anNhaTre', width: 13 },
           { key: 'anMauGiao', width: 13 },
-          { key: 'y2025', width: 8 },
-          { key: 'y2024', width: 8 },
-          { key: 'y2023', width: 8 },
-          { key: 'y2022', width: 8 },
-          { key: 'y2021', width: 8 },
+          { key: 'yNt0', width: 8 },
+          { key: 'yNt1', width: 8 },
+          { key: 'yNt2', width: 8 },
+          { key: 'yMgBe', width: 8 },
+          { key: 'yMgNho', width: 8 },
+          { key: 'yMgLon', width: 8 },
           { key: 'present', width: 18 },
           { key: 'total', width: 18 },
           { key: 'rate', width: 15 },
@@ -555,7 +571,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
         ];
 
         // Dòng 1: Tiêu đề in hoa chuẩn theo hình ảnh gốc
-        ws.mergeCells('A1:M1');
+        ws.mergeCells('A1:N1');
         const t1 = ws.getCell('A1');
         t1.value = `BÁO CÁO SỐ TRẺ THÁNG ${dateParts.month}/${dateParts.year}`;
         t1.font = { name: 'Times New Roman', size: 14, bold: true };
@@ -563,7 +579,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
         ws.getRow(1).height = 26;
 
         // Dòng 2: Phụ đề in nghiêng chuẩn theo hình ảnh gốc
-        ws.mergeCells('A2:M2');
+        ws.mergeCells('A2:N2');
         const t2 = ws.getCell('A2');
         t2.value = '(Báo cáo sĩ số trước 8h sáng hằng ngày)';
         t2.font = { name: 'Times New Roman', size: 10, italic: true };
@@ -571,7 +587,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
         ws.getRow(2).height = 18;
 
         // Dòng 3: Ngày báo cáo căn giữa chuẩn theo hình ảnh gốc
-        ws.mergeCells('A3:M3');
+        ws.mergeCells('A3:N3');
         const t3 = ws.getCell('A3');
         t3.value = `Ngày ${dateParts.day}/${dateParts.month}/${dateParts.year}`;
         t3.font = { name: 'Times New Roman', size: 10, bold: true };
@@ -584,15 +600,16 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
           { col: 'B', title: 'Lớp' },
           { col: 'C', title: 'Ăn nhà trẻ' },
           { col: 'D', title: 'Ăn mẫu giáo' },
-          { col: 'E', title: yNt1 },
-          { col: 'F', title: yNt2 },
-          { col: 'G', title: yMgBe },
-          { col: 'H', title: yMgNho },
-          { col: 'I', title: yMgLon },
-          { col: 'J', title: 'Tổng số trẻ đi học', yellow: true },
-          { col: 'K', title: 'Tổng số trẻ của lớp', yellow: true },
-          { col: 'L', title: 'Tỷ lệ trẻ đi học', yellow: true },
-          { col: 'M', title: 'Tên trẻ nghỉ ốm đi viện' },
+          { col: 'E', title: yNt0 },
+          { col: 'F', title: yNt1 },
+          { col: 'G', title: yNt2 },
+          { col: 'H', title: yMgBe },
+          { col: 'I', title: yMgNho },
+          { col: 'J', title: yMgLon },
+          { col: 'K', title: 'Tổng số trẻ đi học', yellow: true },
+          { col: 'L', title: 'Tổng số trẻ của lớp', yellow: true },
+          { col: 'M', title: 'Tỷ lệ trẻ đi học', yellow: true },
+          { col: 'N', title: 'Tên trẻ nghỉ ốm đi viện' },
         ];
 
         const hRow = ws.getRow(4);
@@ -613,17 +630,21 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
         // CÁC DÒNG DỮ LIỆU: Bắt đầu trực tiếp từ hàng 5 (STT 1 đến hết như trong hình ảnh gốc)
         let curR = 5;
         sortedClassesForTemplate.forEach((row, idx) => {
+          if (!row) return;
+          const cls = row.classItem;
+          const clsName = cls?.class_name || (row as any).className || '';
+          const clsGrade = cls?.grade ?? (row as any).grade;
           const isReported = row.status !== 'NOT_REPORTED';
           const ps = row.preschool || row.report?.preschool_data;
-          const allVal = allIndicator ? row.values[allIndicator.id] : null;
-          const totalAll = allVal?.total ?? (row.classItem.student_count || 0);
+          const allVal = allIndicator && row.values ? row.values[allIndicator.id] : null;
+          const totalAll = allVal?.total ?? (cls?.student_count || 0);
           const absentAll = allVal?.absent ?? ((ps?.absent_excused || 0) + (ps?.absent_unexcused || 0));
           const presentAll = allVal?.present ?? Math.max(0, totalAll - absentAll);
-          const isNT = isNhaTreClass(row.classItem.class_name, row.classItem.grade);
+          const isNT = isNhaTreClass(clsName, clsGrade);
 
           const r = ws.getRow(curR);
           r.getCell('A').value = idx + 1;
-          r.getCell('B').value = row.classItem.class_name;
+          r.getCell('B').value = clsName;
 
           // Ăn bán trú Nhà trẻ vs Mẫu giáo (đồng bộ xuất ăn bán trú với số trẻ có mặt)
           if (isNT) {
@@ -644,26 +665,28 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
 
           // Năm sinh
           if (isNT) {
-            r.getCell('E').value = isReported && !exportBlankTemplate ? (ps?.age_stats?.[yNt1]?.present ?? ps?.age_stats?.[yNt1]?.total ?? '') : '';
-            r.getCell('F').value = isReported && !exportBlankTemplate ? (ps?.age_stats?.[yNt2]?.present ?? ps?.age_stats?.[yNt2]?.total ?? '') : '';
-            r.getCell('G').value = '';
+            r.getCell('E').value = isReported && !exportBlankTemplate ? (ps?.age_stats?.[yNt0]?.present ?? ps?.age_stats?.[yNt0]?.total ?? '') : '';
+            r.getCell('F').value = isReported && !exportBlankTemplate ? (ps?.age_stats?.[yNt1]?.present ?? ps?.age_stats?.[yNt1]?.total ?? '') : '';
+            r.getCell('G').value = isReported && !exportBlankTemplate ? (ps?.age_stats?.[yNt2]?.present ?? ps?.age_stats?.[yNt2]?.total ?? '') : '';
             r.getCell('H').value = '';
             r.getCell('I').value = '';
+            r.getCell('J').value = '';
           } else {
             r.getCell('E').value = '';
             r.getCell('F').value = '';
-            r.getCell('G').value = isReported && !exportBlankTemplate ? (ps?.age_stats?.[yMgBe]?.present ?? ps?.age_stats?.[yMgBe]?.total ?? '') : '';
-            r.getCell('H').value = isReported && !exportBlankTemplate ? (ps?.age_stats?.[yMgNho]?.present ?? ps?.age_stats?.[yMgNho]?.total ?? '') : '';
-            r.getCell('I').value = isReported && !exportBlankTemplate ? (ps?.age_stats?.[yMgLon]?.present ?? ps?.age_stats?.[yMgLon]?.total ?? '') : '';
+            r.getCell('G').value = '';
+            r.getCell('H').value = isReported && !exportBlankTemplate ? (ps?.age_stats?.[yMgBe]?.present ?? ps?.age_stats?.[yMgBe]?.total ?? '') : '';
+            r.getCell('I').value = isReported && !exportBlankTemplate ? (ps?.age_stats?.[yMgNho]?.present ?? ps?.age_stats?.[yMgNho]?.total ?? '') : '';
+            r.getCell('J').value = isReported && !exportBlankTemplate ? (ps?.age_stats?.[yMgLon]?.present ?? ps?.age_stats?.[yMgLon]?.total ?? '') : '';
           }
 
           // Cột Vàng: Tổng số trẻ đi học (Tô màu VÀNG rực rỡ FFFFFF00 như trong ảnh)
-          r.getCell('J').value = isReported && !exportBlankTemplate ? presentAll : '';
-          r.getCell('K').value = exportBlankTemplate ? '' : totalAll;
+          r.getCell('K').value = isReported && !exportBlankTemplate ? presentAll : '';
+          r.getCell('L').value = exportBlankTemplate ? '' : totalAll;
 
           // Tỷ lệ trẻ đi học (%)
           const rate = totalAll > 0 && isReported && !exportBlankTemplate ? ((presentAll / totalAll) * 100).toFixed(2).replace('.', ',') : '';
-          r.getCell('L').value = rate;
+          r.getCell('M').value = rate;
 
           // Tên trẻ nghỉ ốm đi viện
           let sickText: any = '';
@@ -683,7 +706,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
           } else {
             sickText = '';
           }
-          r.getCell('M').value = sickText;
+          r.getCell('N').value = sickText;
 
           r.height = 20;
 
@@ -692,12 +715,12 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
             cell.border = thinBorder;
             if (colNumber === 2) {
               cell.alignment = { horizontal: 'left', vertical: 'middle' };
-            } else if (colNumber === 13 && typeof sickText === 'string' && sickText !== '') {
+            } else if (colNumber === 14 && typeof sickText === 'string' && sickText !== '') {
               cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
             } else {
               cell.alignment = { horizontal: 'center', vertical: 'middle' };
             }
-            if (colNumber === 10) {
+            if (colNumber === 11) {
               cell.font = { name: 'Times New Roman', size: 10, bold: true };
               cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } }; // VÀNG RỰC RỠ CẢ CỘT ĐI HỌC NHƯ TRONG ẢNH
             }
@@ -713,22 +736,23 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
           grandRow.getCell('A').value = 'TỔNG CỘNG TOÀN TRƯỜNG';
           grandRow.getCell('C').value = preschoolTotals.boardingNhaTre || 0;
           grandRow.getCell('D').value = preschoolTotals.boardingMauGiao || 0;
-          grandRow.getCell('E').value = preschoolTotals.byYear?.[yNt1]?.present || preschoolTotals.byYear?.[yNt1]?.total || 0;
-          grandRow.getCell('F').value = preschoolTotals.byYear?.[yNt2]?.present || preschoolTotals.byYear?.[yNt2]?.total || 0;
-          grandRow.getCell('G').value = preschoolTotals.byYear?.[yMgBe]?.present || preschoolTotals.byYear?.[yMgBe]?.total || 0;
-          grandRow.getCell('H').value = preschoolTotals.byYear?.[yMgNho]?.present || preschoolTotals.byYear?.[yMgNho]?.total || 0;
-          grandRow.getCell('I').value = preschoolTotals.byYear?.[yMgLon]?.present || preschoolTotals.byYear?.[yMgLon]?.total || 0;
-          grandRow.getCell('J').value = preschoolTotals.presentStudents;
-          grandRow.getCell('K').value = preschoolTotals.totalStudents;
-          grandRow.getCell('L').value = preschoolTotals.attendanceRate.toFixed(2).replace('.', ',');
-          grandRow.getCell('M').value = preschoolTotals.healthIssueCount > 0 ? preschoolTotals.healthIssueCount : '';
+          grandRow.getCell('E').value = preschoolTotals.byYear?.[yNt0]?.present || preschoolTotals.byYear?.[yNt0]?.total || 0;
+          grandRow.getCell('F').value = preschoolTotals.byYear?.[yNt1]?.present || preschoolTotals.byYear?.[yNt1]?.total || 0;
+          grandRow.getCell('G').value = preschoolTotals.byYear?.[yNt2]?.present || preschoolTotals.byYear?.[yNt2]?.total || 0;
+          grandRow.getCell('H').value = preschoolTotals.byYear?.[yMgBe]?.present || preschoolTotals.byYear?.[yMgBe]?.total || 0;
+          grandRow.getCell('I').value = preschoolTotals.byYear?.[yMgNho]?.present || preschoolTotals.byYear?.[yMgNho]?.total || 0;
+          grandRow.getCell('J').value = preschoolTotals.byYear?.[yMgLon]?.present || preschoolTotals.byYear?.[yMgLon]?.total || 0;
+          grandRow.getCell('K').value = preschoolTotals.presentStudents;
+          grandRow.getCell('L').value = preschoolTotals.totalStudents;
+          grandRow.getCell('M').value = preschoolTotals.attendanceRate.toFixed(2).replace('.', ',');
+          grandRow.getCell('N').value = preschoolTotals.healthIssueCount > 0 ? preschoolTotals.healthIssueCount : '';
           grandRow.height = 24;
 
           grandRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
             cell.font = { name: 'Times New Roman', size: 10, bold: true };
             cell.border = thinBorder;
             cell.alignment = { horizontal: 'center', vertical: 'middle' };
-            if (colNumber === 10) {
+            if (colNumber === 11) {
               cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
             } else {
               cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
@@ -1230,11 +1254,11 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
             type="button"
             onClick={() => loadReportData(true)}
             disabled={loading}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 shadow-2xs transition-colors disabled:opacity-50 cursor-pointer"
-            title="Tải lại số liệu mới nhất từ giáo viên chủ nhiệm"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 shadow-2xs transition-colors disabled:opacity-50 cursor-pointer"
+            title="Đồng bộ lại số liệu mới nhất từ Supabase Cloud và giáo viên chủ nhiệm"
           >
             <RefreshCw className={`w-3.5 h-3.5 text-blue-600 ${loading ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">LÀM MỚI</span>
+            <span className="hidden sm:inline">ĐỒNG BỘ CLOUD</span>
           </button>
 
           <button
@@ -1406,7 +1430,8 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
               <span className={`font-black ${(preschoolTotals.absentNhaTre || 0) > 0 ? 'text-red-700' : 'text-slate-900'}`}>{preschoolTotals.absentNhaTre || 0}</span>
             </div>
           </div>
-          <div className="flex items-center justify-between text-[11px] mt-2 pt-2 border-t border-amber-100 text-amber-900">
+          <div className="flex items-center justify-between text-[11px] mt-2 pt-2 border-t border-amber-100 text-amber-900 gap-1 flex-wrap">
+            <span>Sinh {yNt0}: <b>{preschoolTotals.byYear?.[yNt0]?.present || 0}</b>/{preschoolTotals.byYear?.[yNt0]?.total || 0} (ăn: {preschoolTotals.byYear?.[yNt0]?.boarding || 0})</span>
             <span>Sinh {yNt1}: <b>{preschoolTotals.byYear?.[yNt1]?.present || 0}</b>/{preschoolTotals.byYear?.[yNt1]?.total || 0} (ăn: {preschoolTotals.byYear?.[yNt1]?.boarding || 0})</span>
             <span>Sinh {yNt2}: <b>{preschoolTotals.byYear?.[yNt2]?.present || 0}</b>/{preschoolTotals.byYear?.[yNt2]?.total || 0} (ăn: {preschoolTotals.byYear?.[yNt2]?.boarding || 0})</span>
           </div>
@@ -1461,7 +1486,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            ★ Mẫu báo cáo gốc (Hình ảnh Excel: Sĩ số, Ăn NT/MG, {yNt1}-{yMgLon}, Cột Vàng)
+            ★ Mẫu báo cáo gốc (Hình ảnh Excel: Sĩ số, Ăn NT/MG, {yNt0}-{yMgLon}, Cột Vàng)
           </button>
           <button
             type="button"
@@ -1472,7 +1497,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            Biểu theo Độ Tuổi & Suất Ăn (24 cột mở rộng)
+            Biểu theo Độ Tuổi & Suất Ăn (25 cột mở rộng)
           </button>
           <button
             type="button"
@@ -1549,7 +1574,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
               </h2>
               <p className="text-xs italic text-slate-700 font-serif mt-1">
                 {viewMode === 'PRESCHOOL_AGE_BOARDING'
-                  ? `(Biểu thống kê chi tiết theo độ tuổi & khẩu phần ăn: Khối Nhà trẻ, Khối Mẫu giáo, Trẻ sinh ${yNt1} - ${yMgLon})`
+                  ? `(Biểu thống kê chi tiết theo độ tuổi & khẩu phần ăn: Khối Nhà trẻ, Khối Mẫu giáo, Trẻ sinh ${yNt0} - ${yMgLon})`
                   : viewMode === 'PRESCHOOL_DETAILED'
                   ? '(Biểu thống kê tổng hợp số liệu trẻ theo dõi hàng ngày - 24 cột chuẩn giáo dục Mầm Non)'
                   : '(Biểu thống kê sĩ số & bán trú mầm non rút gọn)'}
@@ -1569,6 +1594,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                   <th className="border border-black px-2 py-2 min-w-[140px] text-center">Lớp</th>
                   <th className="border border-black px-1.5 py-2 min-w-[75px] text-center">Ăn nhà trẻ</th>
                   <th className="border border-black px-1.5 py-2 min-w-[75px] text-center">Ăn mẫu giáo</th>
+                  <th className="border border-black px-1.5 py-2 min-w-[45px] text-center">{yNt0}</th>
                   <th className="border border-black px-1.5 py-2 min-w-[45px] text-center">{yNt1}</th>
                   <th className="border border-black px-1.5 py-2 min-w-[45px] text-center">{yNt2}</th>
                   <th className="border border-black px-1.5 py-2 min-w-[45px] text-center">{yMgBe}</th>
@@ -1638,9 +1664,13 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                     }
                   }
 
+                  const clsId = row.classItem?.id || (row as any).classId || String(idx);
+                  const clsName = row.classItem?.class_name || (row as any).className || '';
+                  const clsCount = row.classItem?.student_count || 0;
+
                   return (
                     <tr
-                      key={row.classItem.id}
+                      key={clsId}
                       className="hover:bg-slate-50 transition-colors"
                     >
                       {/* STT */}
@@ -1650,7 +1680,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
 
                       {/* Lớp */}
                       <td className="border border-black py-1.5 px-2 text-left font-bold text-slate-950 whitespace-nowrap">
-                        {row.classItem.class_name}
+                        {clsName}
                       </td>
 
                       {/* Ăn nhà trẻ */}
@@ -1661,6 +1691,11 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                       {/* Ăn mẫu giáo */}
                       <td className="border border-black py-1.5 px-1 text-center font-bold">
                         {!isNT ? (isReported ? boardingVal : '') : ''}
+                      </td>
+
+                      {/* yNt0 */}
+                      <td className="border border-black py-1.5 px-1 text-center">
+                        {isNT && isReported ? (ps?.age_stats?.[yNt0]?.present ?? ps?.age_stats?.[yNt0]?.total ?? '') : ''}
                       </td>
 
                       {/* yNt1 */}
@@ -1695,7 +1730,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
 
                       {/* Tổng số trẻ của lớp */}
                       <td className="border border-black py-1.5 px-1 font-bold text-center">
-                        {isReported ? totalAll : (row.classItem.student_count || '')}
+                        {isReported ? totalAll : (clsCount || '')}
                       </td>
 
                       {/* Tỷ lệ trẻ đi học */}
@@ -1710,10 +1745,10 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
 
                       {/* Thao tác (print:hidden) */}
                       <td className="border border-black py-1.5 px-1 text-center print:hidden">
-                        {isReported && (isAdmin || isBGH || (isGVCN && currentUser?.assigned_class_id === row.classItem.id)) && (
+                        {isReported && (isAdmin || isBGH || (isGVCN && currentUser?.assigned_class_id === clsId)) && (
                           <button
                             type="button"
-                            onClick={() => handlePromptReset(row.classItem.id, row.classItem.class_name, selectedDate)}
+                            onClick={() => handlePromptReset(clsId, clsName, selectedDate)}
                             disabled={row.status === 'LOCKED' && !isAdmin}
                             className="p-1 text-slate-400 hover:text-red-600 rounded transition-colors disabled:opacity-40"
                             title="Xóa/Reset báo cáo"
@@ -1738,6 +1773,9 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                     {preschoolTotals.boardingMauGiao || 0}
                   </td>
                   <td className="border border-black py-2 px-1 text-center font-black">
+                    {preschoolTotals.byYear?.[yNt0]?.present || preschoolTotals.byYear?.[yNt0]?.total || 0}
+                  </td>
+                  <td className="border border-black py-2 px-1 text-center font-black">
                     {preschoolTotals.byYear?.[yNt1]?.present || preschoolTotals.byYear?.[yNt1]?.total || 0}
                   </td>
                   <td className="border border-black py-2 px-1 text-center font-black">
@@ -1759,7 +1797,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                     {preschoolTotals.totalStudents}
                   </td>
                   <td className="border border-black py-2 px-1 text-center font-black">
-                    {preschoolTotals.attendanceRate.toFixed(2).replace('.', ',')}
+                    {(Number(preschoolTotals.attendanceRate) || 0).toFixed(2).replace('.', ',')}
                   </td>
                   <td className="border border-black py-2 px-2 text-center font-bold">
                     {preschoolTotals.healthIssueCount > 0 ? preschoolTotals.healthIssueCount : ''}
@@ -1783,7 +1821,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                   <th rowSpan={2} className="border border-black px-2 py-2 min-w-[130px] text-center">
                     Giáo viên phụ trách
                   </th>
-                  <th colSpan={6} className="border border-black px-1 py-1.5 text-center bg-amber-50/80 text-amber-950 font-black">
+                  <th colSpan={7} className="border border-black px-1 py-1.5 text-center bg-amber-50/80 text-amber-950 font-black">
                     KHỐI NHÀ TRẺ (DƯỚI 3 TUỔI)
                   </th>
                   <th colSpan={7} className="border border-black px-1 py-1.5 text-center bg-teal-50/80 text-teal-950 font-black">
@@ -1810,6 +1848,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                   <th className="border border-black px-1 py-1.5 w-11 bg-amber-50/40 text-emerald-800">Có mặt</th>
                   <th className="border border-black px-1 py-1.5 w-10 bg-amber-50/40 text-red-700">Vắng</th>
                   <th className="border border-black px-1 py-1.5 w-12 bg-amber-100/80 text-amber-950 font-black">Ăn NT</th>
+                  <th className="border border-black px-1 py-1.5 min-w-[70px] bg-amber-50/20 font-bold">Sinh {yNt0} (&lt; 1T)</th>
                   <th className="border border-black px-1 py-1.5 min-w-[70px] bg-amber-50/20 font-bold">Sinh {yNt1} (1-2T)</th>
                   <th className="border border-black px-1 py-1.5 min-w-[70px] bg-amber-50/20 font-bold">Sinh {yNt2} (2-3T)</th>
 
@@ -1902,10 +1941,13 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
 
                   const presentRate = totalAll > 0 ? (presentAll / totalAll) * 100 : 0;
 
+                  const clsId = row.classItem?.id || (row as any).classId || String(idx);
+                  const clsName = row.classItem?.class_name || (row as any).className || '';
+
                   return (
-                    <tr key={row.classItem.id} className="text-center hover:bg-slate-50/70">
+                    <tr key={clsId} className="text-center hover:bg-slate-50/70">
                       <td className="border border-black py-1.5 px-1 font-medium">{idx + 1}</td>
-                      <td className="border border-black py-1.5 px-2 font-bold text-left">{row.classItem.class_name}</td>
+                      <td className="border border-black py-1.5 px-2 font-bold text-left">{clsName}</td>
                       <td className="border border-black py-1.5 px-2 text-left font-medium">{row.teacher?.full_name || '-'}</td>
 
                       {/* Khối Nhà trẻ */}
@@ -1913,6 +1955,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                       <td className="border border-black py-1.5 px-1 font-bold text-emerald-800 bg-amber-50/20">{isReported ? presentNT : '-'}</td>
                       <td className={`border border-black py-1.5 px-1 bg-amber-50/20 ${absentNT > 0 ? 'text-red-700 font-bold' : ''}`}>{isReported ? absentNT : '-'}</td>
                       <td className="border border-black py-1.5 px-1 font-black text-amber-900 bg-amber-100/50">{isReported ? boardingNT : '-'}</td>
+                      <td className="border border-black py-1.5 px-1 bg-amber-50/10">{renderYearStat(yNt0)}</td>
                       <td className="border border-black py-1.5 px-1 bg-amber-50/10">{renderYearStat(yNt1)}</td>
                       <td className="border border-black py-1.5 px-1 bg-amber-50/10">{renderYearStat(yNt2)}</td>
 
@@ -1940,10 +1983,10 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
 
                       {/* Xử lý */}
                       <td className="border border-black py-1 px-1 text-center print:hidden">
-                        {isReported && (isAdmin || isBGH || (isGVCN && currentUser?.assigned_class_id === row.classItem.id)) ? (
+                        {isReported && (isAdmin || isBGH || (isGVCN && currentUser?.assigned_class_id === clsId)) ? (
                           <button
                             type="button"
-                            onClick={() => handlePromptReset(row.classItem.id, row.classItem.class_name, selectedDate)}
+                            onClick={() => handlePromptReset(clsId, clsName, selectedDate)}
                             disabled={row.status === 'LOCKED' && !isAdmin}
                             className="inline-flex items-center justify-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-colors shadow-2xs disabled:opacity-40 cursor-pointer"
                             title="Reset báo cáo nhầm về Chưa báo cáo"
@@ -1971,6 +2014,10 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                     <td className="border border-black py-2 px-1 text-center font-extrabold text-emerald-800 bg-amber-50/50">{preschoolTotals.presentNhaTre || 0}</td>
                     <td className={`border border-black py-2 px-1 text-center font-bold bg-amber-50/50 ${(preschoolTotals.absentNhaTre || 0) > 0 ? 'text-red-700' : ''}`}>{preschoolTotals.absentNhaTre || 0}</td>
                     <td className="border border-black py-2 px-1 text-center font-black text-amber-900 bg-amber-200/70">{preschoolTotals.boardingNhaTre || 0}</td>
+                    <td className="border border-black py-2 px-1 text-center text-[10px] bg-amber-50/30">
+                      <b>{preschoolTotals.byYear?.[yNt0]?.present || 0}</b>/{preschoolTotals.byYear?.[yNt0]?.total || 0}
+                      <span className="text-amber-900 font-bold ml-1">({preschoolTotals.byYear?.[yNt0]?.boarding || 0} ăn)</span>
+                    </td>
                     <td className="border border-black py-2 px-1 text-center text-[10px] bg-amber-50/30">
                       <b>{preschoolTotals.byYear?.[yNt1]?.present || 0}</b>/{preschoolTotals.byYear?.[yNt1]?.total || 0}
                       <span className="text-amber-900 font-bold ml-1">({preschoolTotals.byYear?.[yNt1]?.boarding || 0} ăn)</span>
@@ -2007,10 +2054,10 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
 
                     {/* Chuyên cần */}
                     <td className="border border-black py-2 px-1 text-xs font-bold text-black text-center">
-                      {preschoolTotals.attendanceRate.toFixed(1).replace('.', ',')}%
+                      {(Number(preschoolTotals.attendanceRate) || 0).toFixed(1).replace('.', ',')}%
                     </td>
                     <td className="border border-black py-2 px-2 text-left text-[11px] font-semibold text-slate-700">
-                      Đã báo cáo: {reportData.reportedClasses}/{reportData.totalClasses} nhóm/lớp
+                      Đã báo cáo: {reportData?.reportedClasses ?? 0}/{reportData?.totalClasses ?? 0} nhóm/lớp
                     </td>
                     <td className="border border-black py-2 px-1 text-center font-bold text-slate-400 print:hidden">-</td>
                   </tr>
@@ -2132,13 +2179,16 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
 
                   const presentRate = totalAll > 0 ? (presentAll / totalAll) * 100 : 0;
 
+                  const clsId = row.classItem?.id || (row as any).classId || String(idx);
+                  const clsName = row.classItem?.class_name || (row as any).className || '';
+
                   return (
-                    <tr key={row.classItem.id} className="text-center hover:bg-slate-50/70">
+                    <tr key={clsId} className="text-center hover:bg-slate-50/70">
                       <td className="border border-black py-1.5 px-1 text-center font-medium">
                         {idx + 1}
                       </td>
                       <td className="border border-black py-1.5 px-2 font-bold text-black text-left">
-                        {row.classItem.class_name}
+                        {clsName}
                       </td>
                       <td className="border border-black py-1.5 px-2 text-left text-black font-medium">
                         {row.teacher?.full_name || '-'}
@@ -2225,10 +2275,10 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
 
                       {/* Xử lý */}
                       <td className="border border-black py-1 px-1 text-center print:hidden">
-                        {isReported && (isAdmin || isBGH || (isGVCN && currentUser?.assigned_class_id === row.classItem.id)) ? (
+                        {isReported && (isAdmin || isBGH || (isGVCN && currentUser?.assigned_class_id === clsId)) ? (
                           <button
                             type="button"
-                            onClick={() => handlePromptReset(row.classItem.id, row.classItem.class_name, selectedDate)}
+                            onClick={() => handlePromptReset(clsId, clsName, selectedDate)}
                             disabled={row.status === 'LOCKED' && !isAdmin}
                             className="inline-flex items-center justify-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-colors shadow-2xs disabled:opacity-40 cursor-pointer"
                             title="Reset báo cáo nhầm về Chưa báo cáo"
@@ -2284,12 +2334,12 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                       {preschoolTotals.healthIssueCount}
                     </td>
                     <td className="border border-black py-2 px-2 text-left text-[11px] font-semibold text-slate-700">
-                      Đã báo cáo: {reportData.reportedClasses}/{reportData.totalClasses} nhóm/lớp
+                      Đã báo cáo: {reportData?.reportedClasses ?? 0}/{reportData?.totalClasses ?? 0} nhóm/lớp
                     </td>
 
                     {/* Chuyên cần */}
                     <td className="border border-black py-2 px-1 text-xs font-bold text-black text-center">
-                      {preschoolTotals.attendanceRate.toFixed(1).replace('.', ',')}%
+                      {(Number(preschoolTotals.attendanceRate) || 0).toFixed(1).replace('.', ',')}%
                     </td>
                     <td className="border border-black py-2 px-1 text-center font-bold text-slate-400 print:hidden">
                       -
@@ -2348,7 +2398,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
               </thead>
 
               <tbody>
-                {reportData?.rows.map((row) => {
+                {reportData?.rows.map((row, idx) => {
                   const isReported = row.status !== 'NOT_REPORTED';
 
                   const allVal = allIndicator && row.values ? row.values[allIndicator.id] : null;
@@ -2370,10 +2420,13 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                   const studentNames = getAbsentStudentText(row);
                   const studentAddresses = getAbsentStudentAddresses(row);
 
+                  const clsId = row.classItem?.id || (row as any).classId || String(idx);
+                  const clsName = row.classItem?.class_name || (row as any).className || '';
+
                   return (
-                    <tr key={row.classItem.id} className="text-center hover:bg-slate-50/70">
+                    <tr key={clsId} className="text-center hover:bg-slate-50/70">
                       <td className="border border-black py-1.5 px-2 font-bold text-black text-center">
-                        {row.classItem.class_name}
+                        {clsName}
                       </td>
 
                       <td className="border border-black py-1.5 px-2.5 text-left text-black font-medium">
@@ -2437,10 +2490,10 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                       </td>
 
                       <td className="border border-black py-1 px-1.5 text-center print:hidden">
-                        {isReported && (isAdmin || isBGH || (isGVCN && currentUser?.assigned_class_id === row.classItem.id)) ? (
+                        {isReported && (isAdmin || isBGH || (isGVCN && currentUser?.assigned_class_id === clsId)) ? (
                           <button
                             type="button"
-                            onClick={() => handlePromptReset(row.classItem.id, row.classItem.class_name, selectedDate)}
+                            onClick={() => handlePromptReset(clsId, clsName, selectedDate)}
                             disabled={row.status === 'LOCKED' && !isAdmin}
                             className="inline-flex items-center justify-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-colors shadow-2xs disabled:opacity-40 cursor-pointer"
                             title="Reset báo cáo nhầm về Chưa báo cáo"
@@ -2459,12 +2512,13 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                 {/* TỔNG CỘNG HÀNG CUỐI (Summary Row) */}
                 {reportData && (
                   (() => {
-                    const totalSchoolAll = reportData.totals[allIndicator?.id || '']?.total || 0;
-                    const absentSchoolAll = reportData.totals[allIndicator?.id || '']?.absent || 0;
-                    const presentSchoolAll = reportData.totals[allIndicator?.id || '']?.present || (totalSchoolAll - absentSchoolAll);
+                    const totalsObj = reportData.totals || {};
+                    const totalSchoolAll = totalsObj[allIndicator?.id || '']?.total || 0;
+                    const absentSchoolAll = totalsObj[allIndicator?.id || '']?.absent || 0;
+                    const presentSchoolAll = totalsObj[allIndicator?.id || '']?.present || (totalSchoolAll - absentSchoolAll);
 
-                    const totalSchoolBoarding = boardingIndicator ? (reportData.totals[boardingIndicator.id]?.total || 0) : 0;
-                    const absentSchoolBoarding = boardingIndicator ? (reportData.totals[boardingIndicator.id]?.absent || 0) : 0;
+                    const totalSchoolBoarding = boardingIndicator && totalsObj[boardingIndicator.id] ? (totalsObj[boardingIndicator.id]?.total || 0) : 0;
+                    const absentSchoolBoarding = boardingIndicator && totalsObj[boardingIndicator.id] ? (totalsObj[boardingIndicator.id]?.absent || 0) : 0;
 
                     const overallAbsentRate = totalSchoolAll > 0 ? (absentSchoolAll / totalSchoolAll) * 100 : 0;
                     const overallPresentRate = totalSchoolAll > 0 ? (presentSchoolAll / totalSchoolAll) * 100 : 0;
@@ -2490,7 +2544,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                         </td>
 
                         <td className="border border-black py-2 px-2 text-left text-[11px] font-semibold text-slate-700">
-                          Đã báo cáo: {reportData.reportedClasses}/{reportData.totalClasses} lớp
+                          Đã báo cáo: {reportData?.reportedClasses ?? 0}/{reportData?.totalClasses ?? 0} lớp
                         </td>
                         <td className="border border-black py-2 px-2 text-left text-[11px] font-semibold text-slate-700">
                           -
@@ -2614,8 +2668,9 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
               ) : (
                 (() => {
                   const reportedRows = (managerData?.rows || []).filter((r) => {
+                    const cid = r.classItem?.id || (r as any).classId;
                     if (isGVCN && !isAdmin && !isBGH) {
-                      return r.classItem.id === currentUser?.assigned_class_id;
+                      return cid === currentUser?.assigned_class_id;
                     }
                     return true;
                   });
@@ -2630,13 +2685,15 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
 
                   return (
                     <div className="space-y-2">
-                      {reportedRows.map((row) => {
+                      {reportedRows.map((row, rIdx) => {
                         const isRep = row.status !== 'NOT_REPORTED';
-                        const canOperate = isAdmin || isBGH || (isGVCN && currentUser?.assigned_class_id === row.classItem.id);
+                        const cid = row.classItem?.id || (row as any).classId || String(rIdx);
+                        const cname = row.classItem?.class_name || (row as any).className || `Lớp ${rIdx + 1}`;
+                        const canOperate = isAdmin || isBGH || (isGVCN && currentUser?.assigned_class_id === cid);
 
                         return (
                           <div
-                            key={row.classItem.id}
+                            key={cid}
                             className={`p-3 rounded-2xl border flex items-center justify-between gap-3 transition-all ${
                               isRep
                                 ? 'bg-white border-slate-200 hover:border-rose-300 shadow-2xs'
@@ -2649,11 +2706,11 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                                   isRep ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
                                 }`}
                               >
-                                {row.classItem.class_name}
+                                {cname}
                               </div>
                               <div className="min-w-0">
                                 <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
-                                  <span>Lớp {row.classItem.class_name}</span>
+                                  <span>Lớp {cname}</span>
                                   <span
                                     className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
                                       isRep
@@ -2680,7 +2737,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    handlePromptReset(row.classItem.id, row.classItem.class_name, managerDate)
+                                    handlePromptReset(cid, cname, managerDate)
                                   }
                                   disabled={row.status === 'LOCKED' && !isAdmin}
                                   className="px-3 py-1.5 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 active:scale-95 transition-all shadow-2xs flex items-center gap-1.5 disabled:opacity-40 cursor-pointer"

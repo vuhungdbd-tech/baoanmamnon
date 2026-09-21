@@ -57,8 +57,12 @@ const AppContent: React.FC = () => {
   }, [loading, currentUser, currentPath]);
 
   if (loading) {
-    // Keep a completely transparent state if strictly necessary, but avoid visual flash
-    return null;
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-500 font-sans">
+        <div className="w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mb-3" />
+        <p className="text-xs font-bold text-slate-600 tracking-wide uppercase">Đang tải hệ thống...</p>
+      </div>
+    );
   }
 
   // If not logged in, show LoginPage

@@ -138,10 +138,25 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   useEffect(() => {
     refreshAll().finally(() => setLoading(false));
 
-    // Subscribe to realtime changes
+    // Subscribe to realtime changes - only refresh structural school context when necessary
     const unsubscribe = subscribeRealtime((event) => {
-      // Re-fetch affected or all data
-      refreshAll();
+      const structuralTables = [
+        'school_settings',
+        'school_years',
+        'campuses',
+        'classes',
+        'indicator_groups',
+        'students',
+        'preschool_grades',
+        'profiles',
+        'all',
+        'all_reset',
+      ];
+      // Do NOT refresh school context on daily_reports, daily_report_values, or system_logs
+      // to avoid resetting active teacher input forms or freezing their screens
+      if (structuralTables.includes(event.table)) {
+        refreshAll();
+      }
     });
 
     return () => {
