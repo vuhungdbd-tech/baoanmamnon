@@ -21,6 +21,9 @@ import {
   AbsentStudent,
   PreschoolGradeConfig,
   DEFAULT_PRESCHOOL_GRADES,
+  getPreschoolBirthYearsForSchoolYear,
+  getDefaultPreschoolGradesForSchoolYear,
+  parseSchoolStartYear,
 } from '../types';
 import { getSupabaseClient, isSupabaseConnected } from './supabase';
 import {
@@ -37,6 +40,7 @@ import {
   getTodayDateStr,
 } from '../utils/schoolWeeks';
 import { getTeacherAllowedScope } from '../utils/preschoolPermissions';
+import { removeVietnameseTones } from '../utils/vietnamese';
 
 const STORAGE_KEYS = {
   SETTINGS: 'sso_school_settings_v1',
@@ -51,7 +55,29 @@ const STORAGE_KEYS = {
   OFF_DAYS: 'sso_school_off_days_v1',
   STUDENTS: 'sso_students_v1',
   PRESCHOOL_GRADES: 'sso_preschool_grades_v1',
+  DELETED_PROFILE_IDS: 'sso_deleted_profile_ids_v1',
 };
+
+export function getDeletedProfileIds(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.DELETED_PROFILE_IDS);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) return new Set(arr);
+    }
+  } catch {}
+  return new Set();
+}
+
+export function recordDeletedProfileIds(ids: string[]) {
+  if (typeof window === 'undefined' || !ids || ids.length === 0) return;
+  try {
+    const set = getDeletedProfileIds();
+    ids.forEach((id) => set.add(id));
+    localStorage.setItem(STORAGE_KEYS.DELETED_PROFILE_IDS, JSON.stringify(Array.from(set)));
+  } catch {}
+}
 
 export interface TableSyncStatus {
   table: string;
@@ -288,6 +314,66 @@ function syncToSupabase(task: () => Promise<any>) {
   });
 }
 
+// Safely merge items fetched from cloud without wiping local-first edits or newly created local items
+function mergeCloudIntoLocal<T extends { id: string }>(storageKey: string, cloudItems: T[]) {
+  if (!cloudItems || cloudItems.length === 0) return;
+  try {
+    const rawLocal = localStorage.getItem(storageKey);
+    const currentLocal: T[] = rawLocal ? JSON.parse(rawLocal) : [];
+    const map = new Map<string, T>();
+
+    // Put local items first so local changes take precedence over stale cloud fetches
+    currentLocal.forEach((item) => {
+      if (item && item.id) map.set(item.id, item);
+    });
+
+    const isProfilesTable = storageKey === STORAGE_KEYS.PROFILES;
+    const deletedProfileIds = isProfilesTable ? getDeletedProfileIds() : new Set<string>();
+
+    let addedNew = false;
+    cloudItems.forEach((c) => {
+      if (!c || !c.id) return;
+      if (isProfilesTable && deletedProfileIds.has(c.id)) {
+        // Bản ghi này đã bị người dùng/hệ thống dọn dẹp, không được kéo lại từ Cloud!
+        return;
+      }
+
+      // Nếu là bảng profiles và role là GVCN, chặn nếu đã có GVCN trùng họ tên trong local
+      if (isProfilesTable) {
+        const p = c as unknown as Profile;
+        if (p.role === 'GVCN') {
+          const normName = removeVietnameseTones(p.full_name?.trim()?.toLowerCase() || '').replace(/\s+/g, ' ');
+          if (normName) {
+            for (const existing of map.values()) {
+              const exProfile = existing as unknown as Profile;
+              if (exProfile.role === 'GVCN') {
+                const exNorm = removeVietnameseTones(exProfile.full_name?.trim()?.toLowerCase() || '').replace(/\s+/g, ' ');
+                if (exNorm === normName) {
+                  // Đã có giáo viên này trong máy, bỏ qua bản ghi trùng lặp từ cloud
+                  return;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      if (!map.has(c.id)) {
+        map.set(c.id, c);
+        addedNew = true;
+      }
+    });
+
+    if (addedNew) {
+      const merged = Array.from(map.values());
+      localStorage.setItem(storageKey, JSON.stringify(merged));
+      notifyRealtimeChange(storageKey);
+    }
+  } catch (err) {
+    console.warn('mergeCloudIntoLocal error:', err);
+  }
+}
+
 // ----------------------------------------------------
 // STORAGE SERVICE CRUD & FULL SUPABASE PERSISTENCE API
 // ----------------------------------------------------
@@ -444,6 +530,14 @@ export const StorageService = {
       is_active: y.id === yearId,
     }));
     localStorage.setItem(STORAGE_KEYS.YEARS, JSON.stringify(updated));
+
+    const activeY = updated.find((y) => y.id === yearId);
+    if (activeY) {
+      // Tự động tịnh tiến cấu hình Khối mầm non & Năm sinh tương ứng với Năm học mới
+      const newGrades = getDefaultPreschoolGradesForSchoolYear(activeY.name);
+      localStorage.setItem(STORAGE_KEYS.PRESCHOOL_GRADES, JSON.stringify(newGrades));
+      notifyRealtimeChange('preschool_grades', newGrades);
+    }
 
     const supabase = getSupabaseClient();
     if (supabase && isSupabaseConnected()) {
@@ -689,9 +783,12 @@ export const StorageService = {
   },
 
   async resetPreschoolGradesToDefault(): Promise<PreschoolGradeConfig[]> {
-    localStorage.setItem(STORAGE_KEYS.PRESCHOOL_GRADES, JSON.stringify(DEFAULT_PRESCHOOL_GRADES));
-    notifyRealtimeChange('preschool_grades', DEFAULT_PRESCHOOL_GRADES);
-    return [...DEFAULT_PRESCHOOL_GRADES];
+    const years = await this.getSchoolYears();
+    const active = years.find((y) => y.is_active) || years[0];
+    const defaultGrades = getDefaultPreschoolGradesForSchoolYear(active?.name);
+    localStorage.setItem(STORAGE_KEYS.PRESCHOOL_GRADES, JSON.stringify(defaultGrades));
+    notifyRealtimeChange('preschool_grades', defaultGrades);
+    return [...defaultGrades];
   },
 
   // --- 5. Classes ---
@@ -719,7 +816,7 @@ export const StorageService = {
         if (supabase) {
           const { data: cloudData, error } = await supabase.from('classes').select('*').order('sort_order', { ascending: true });
           if (!error && cloudData && cloudData.length > 0) {
-            localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(cloudData));
+            mergeCloudIntoLocal(STORAGE_KEYS.CLASSES, cloudData);
           }
         }
       });
@@ -775,6 +872,41 @@ export const StorageService = {
       const supabase = getSupabaseClient();
       if (supabase) await supabase.from('classes').upsert(classItem);
     });
+
+    // 2-way sync with homeroom teacher profile
+    if (classItem.homeroom_teacher_id) {
+      try {
+        const rawProfiles = localStorage.getItem(STORAGE_KEYS.PROFILES);
+        if (rawProfiles) {
+          const profiles: Profile[] = JSON.parse(rawProfiles);
+          let pModified = false;
+          profiles.forEach((p) => {
+            if (p.id === classItem.homeroom_teacher_id) {
+              if (p.assigned_class_id !== classItem.id) {
+                p.assigned_class_id = classItem.id;
+                p.role = 'GVCN';
+                pModified = true;
+              }
+            } else if (p.assigned_class_id === classItem.id) {
+              p.assigned_class_id = undefined;
+              pModified = true;
+            }
+          });
+          if (pModified) {
+            localStorage.setItem(STORAGE_KEYS.PROFILES, JSON.stringify(profiles));
+            const assignedTeacher = profiles.find((p) => p.id === classItem.homeroom_teacher_id);
+            if (assignedTeacher) {
+              syncToSupabase(async () => {
+                const supabase = getSupabaseClient();
+                if (supabase) await supabase.from('profiles').upsert(assignedTeacher);
+              });
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Error in saveClass two-way sync profile:', e);
+      }
+    }
 
     notifyRealtimeChange('classes');
   },
@@ -833,7 +965,7 @@ export const StorageService = {
         if (supabase) {
           const { data: cloudData, error } = await supabase.from('students').select('*').order('full_name', { ascending: true });
           if (!error && cloudData && cloudData.length > 0) {
-            localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(cloudData));
+            mergeCloudIntoLocal(STORAGE_KEYS.STUDENTS, cloudData);
           }
         }
       });
@@ -924,13 +1056,7 @@ export const StorageService = {
         if (supabase) {
           const { data, error } = await supabase.from('profiles').select('*').order('created_at', { ascending: true });
           if (!error && data && data.length > 0) {
-            const map = new Map<string, Profile>();
-            data.forEach((p) => map.set(p.id, p));
-            list.forEach((p) => {
-              if (!map.has(p.id)) map.set(p.id, p);
-            });
-            const merged = Array.from(map.values());
-            localStorage.setItem(STORAGE_KEYS.PROFILES, JSON.stringify(merged));
+            mergeCloudIntoLocal(STORAGE_KEYS.PROFILES, data);
           }
         }
       });
@@ -948,14 +1074,83 @@ export const StorageService = {
       if (rawGrades) pgList = JSON.parse(rawGrades);
     } catch {}
 
+    // 1. Loại bỏ các ID nằm trong danh sách đã xóa (Tombstone)
+    const deletedIds = getDeletedProfileIds();
+    if (deletedIds.size > 0) {
+      const filtered = list.filter((p) => !deletedIds.has(p.id));
+      if (filtered.length !== list.length) {
+        list = filtered;
+        modified = true;
+      }
+    }
+
+    // 2. Tự động deduplicate các tài khoản GVCN có họ tên trùng nhau:
+    const gvcnNormMap = new Map<string, Profile>();
+    const cleanedProfiles: Profile[] = [];
+    const idsToRemoveNow: string[] = [];
+
+    for (const p of list) {
+      if (p.role !== 'GVCN') {
+        cleanedProfiles.push(p);
+        continue;
+      }
+
+      const normName = removeVietnameseTones(p.full_name?.trim()?.toLowerCase() || '').replace(/\s+/g, ' ');
+      if (!normName) {
+        cleanedProfiles.push(p);
+        continue;
+      }
+
+      const existing = gvcnNormMap.get(normName);
+      if (!existing) {
+        gvcnNormMap.set(normName, p);
+      } else {
+        // So sánh để chọn bản ghi tốt nhất
+        const pAssigned = !!p.assigned_class_id || classesList.some((c) => c.homeroom_teacher_id === p.id);
+        const exAssigned = !!existing.assigned_class_id || classesList.some((c) => c.homeroom_teacher_id === existing.id);
+
+        let winner = existing;
+        let loser = p;
+
+        if (pAssigned && !exAssigned) {
+          winner = p;
+          loser = existing;
+          gvcnNormMap.set(normName, winner);
+        }
+
+        if (!winner.phone && loser.phone) winner.phone = loser.phone;
+        if (!winner.assigned_class_id && loser.assigned_class_id) winner.assigned_class_id = loser.assigned_class_id;
+
+        idsToRemoveNow.push(loser.id);
+        modified = true;
+      }
+    }
+
+    if (idsToRemoveNow.length > 0) {
+      recordDeletedProfileIds(idsToRemoveNow);
+    }
+
+    for (const p of gvcnNormMap.values()) {
+      cleanedProfiles.push(p);
+    }
+    list = cleanedProfiles;
+
     list = list.map((p) => {
       if (p.role === 'ADMIN' && p.email !== 'admin@db.edu.vn') {
         p.email = 'admin@db.edu.vn';
         modified = true;
       }
-      if (p.role === 'GVCN' && !p.teaching_scope) {
-        p.teaching_scope = getTeacherAllowedScope(p, classesList, pgList);
-        modified = true;
+      if (p.role === 'GVCN') {
+        if (!p.teaching_scope) {
+          p.teaching_scope = getTeacherAllowedScope(p, classesList, pgList);
+          modified = true;
+        }
+        // Reconcile assignment from class
+        const matchingClass = classesList.find((c) => c.homeroom_teacher_id === p.id);
+        if (matchingClass && p.assigned_class_id !== matchingClass.id) {
+          p.assigned_class_id = matchingClass.id;
+          modified = true;
+        }
       }
       return p;
     });
@@ -977,6 +1172,40 @@ export const StorageService = {
       if (supabase) await supabase.from('profiles').upsert(profile);
     });
 
+    // 2-way sync with class
+    if (profile.role === 'GVCN' && profile.assigned_class_id) {
+      try {
+        const rawClasses = localStorage.getItem(STORAGE_KEYS.CLASSES);
+        if (rawClasses) {
+          const classes: ClassItem[] = JSON.parse(rawClasses);
+          let cModified = false;
+          classes.forEach((c) => {
+            if (c.id === profile.assigned_class_id) {
+              if (c.homeroom_teacher_id !== profile.id) {
+                c.homeroom_teacher_id = profile.id;
+                cModified = true;
+              }
+            } else if (c.homeroom_teacher_id === profile.id) {
+              c.homeroom_teacher_id = undefined;
+              cModified = true;
+            }
+          });
+          if (cModified) {
+            localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(classes));
+            const assignedClass = classes.find((c) => c.id === profile.assigned_class_id);
+            if (assignedClass) {
+              syncToSupabase(async () => {
+                const supabase = getSupabaseClient();
+                if (supabase) await supabase.from('classes').upsert(assignedClass);
+              });
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Error in saveProfile two-way sync class:', e);
+      }
+    }
+
     notifyRealtimeChange('profiles');
   },
 
@@ -991,6 +1220,161 @@ export const StorageService = {
     });
 
     notifyRealtimeChange('profiles');
+  },
+
+  /**
+   * Kiểm tra xem hiện có bao nhiêu tài khoản GVCN bị trùng tên trong hệ thống
+   */
+  async getDuplicateProfilesSummary(): Promise<{
+    duplicateGroupsCount: number;
+    duplicateAccountsCount: number;
+    details: Array<{ name: string; count: number; ids: string[] }>;
+  }> {
+    const profiles = await this.getProfiles();
+    const gvcnList = profiles.filter((p) => p.role === 'GVCN');
+    const groupMap = new Map<string, Profile[]>();
+
+    for (const p of gvcnList) {
+      const key = removeVietnameseTones(p.full_name.trim().toLowerCase());
+      if (!groupMap.has(key)) {
+        groupMap.set(key, []);
+      }
+      groupMap.get(key)!.push(p);
+    }
+
+    const details: Array<{ name: string; count: number; ids: string[] }> = [];
+    let duplicateAccountsCount = 0;
+
+    for (const [, group] of groupMap.entries()) {
+      if (group.length > 1) {
+        duplicateAccountsCount += (group.length - 1);
+        details.push({
+          name: group[0].full_name,
+          count: group.length,
+          ids: group.map((p) => p.id),
+        });
+      }
+    }
+
+    return {
+      duplicateGroupsCount: details.length,
+      duplicateAccountsCount,
+      details,
+    };
+  },
+
+  /**
+   * Tự động quét và dọn dẹp các tài khoản GVCN bị trùng lặp họ tên
+   * Giữ lại tài khoản có phân công lớp hoặc đầy đủ thông tin nhất, xóa các tài khoản thừa
+   */
+  async deduplicateProfiles(): Promise<{
+    removedCount: number;
+    cleanedNames: string[];
+    affectedProfiles: string[];
+  }> {
+    const [allProfiles, allClasses] = await Promise.all([
+      this.getProfiles(),
+      this.getClasses(),
+    ]);
+
+    const gvcnList = allProfiles.filter((p) => p.role === 'GVCN');
+    const groupMap = new Map<string, Profile[]>();
+
+    for (const p of gvcnList) {
+      const key = removeVietnameseTones(p.full_name.trim().toLowerCase()).replace(/\s+/g, ' ');
+      if (!key) continue;
+      if (!groupMap.has(key)) {
+        groupMap.set(key, []);
+      }
+      groupMap.get(key)!.push(p);
+    }
+
+    const cleanedNames: string[] = [];
+    const removedIds = new Set<string>();
+    let classesModified = false;
+    const updatedClasses = [...allClasses];
+    const updatedProfiles = [...allProfiles];
+
+    for (const [, group] of groupMap.entries()) {
+      if (group.length <= 1) continue;
+
+      // Sắp xếp ưu tiên:
+      // 1. Tài khoản đang được gán lớp (homeroom_teacher_id hoặc assigned_class_id)
+      // 2. Tài khoản có số điện thoại
+      // 3. Tài khoản có email thật (không bắt đầu bằng gv_auto)
+      // 4. Tài khoản tạo sớm nhất
+      const scored = group.map((p) => {
+        let score = 0;
+        const isAssigned = updatedClasses.some(
+          (c) => c.homeroom_teacher_id === p.id || c.id === p.assigned_class_id
+        );
+        if (isAssigned) score += 100;
+        if (p.phone && p.phone.trim().length > 0) score += 20;
+        if (p.email && !p.email.startsWith('gv_') && !p.email.includes('example')) score += 10;
+        return { profile: p, score };
+      });
+
+      scored.sort((a, b) => b.score - a.score);
+
+      const winner = scored[0].profile;
+      cleanedNames.push(`${winner.full_name} (${group.length - 1} bản ghi trùng)`);
+
+      for (let i = 1; i < scored.length; i++) {
+        const loser = scored[i].profile;
+        removedIds.add(loser.id);
+
+        if (!winner.phone && loser.phone) winner.phone = loser.phone;
+        if (!winner.assigned_class_id && loser.assigned_class_id) winner.assigned_class_id = loser.assigned_class_id;
+
+        // Chuyển bất kỳ lớp nào đang liên kết với loser sang trỏ vào winner
+        for (const cls of updatedClasses) {
+          if (cls.homeroom_teacher_id === loser.id) {
+            cls.homeroom_teacher_id = winner.id;
+            classesModified = true;
+          }
+        }
+      }
+    }
+
+    if (removedIds.size === 0) {
+      return { removedCount: 0, cleanedNames: [], affectedProfiles: [] };
+    }
+
+    // Ghi nhận các ID bị xóa vào tombstone để tránh bị Cloud pull ngược lại
+    recordDeletedProfileIds(Array.from(removedIds));
+
+    // Lưu danh sách profiles đã dọn dẹp
+    const remainingProfiles = updatedProfiles.filter((p) => !removedIds.has(p.id));
+    localStorage.setItem(STORAGE_KEYS.PROFILES, JSON.stringify(remainingProfiles));
+
+    if (classesModified) {
+      localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(updatedClasses));
+    }
+
+    // Đồng bộ lên Supabase Cloud
+    syncToSupabase(async () => {
+      const supabase = getSupabaseClient();
+      if (supabase) {
+        const deleteArray = Array.from(removedIds);
+        await supabase.from('profiles').delete().in('id', deleteArray);
+        if (classesModified) {
+          for (const cls of updatedClasses) {
+            await supabase.from('classes').upsert(cls);
+          }
+        }
+      }
+    });
+
+    notifyRealtimeChange('profiles');
+    if (classesModified) {
+      notifyRealtimeChange('classes');
+    }
+
+    return {
+      removedCount: removedIds.size,
+      cleanedNames,
+      affectedProfiles: Array.from(removedIds),
+    };
   },
 
   // --- 7. Daily Reports & Values ---
@@ -1455,11 +1839,19 @@ export const StorageService = {
       }
     }
 
-    const [classes, profiles, indicators] = await Promise.all([
+    const [classes, profiles, indicators, schoolYears] = await Promise.all([
       this.getClasses(),
       this.getProfiles(),
       this.getIndicatorGroups(),
+      this.getSchoolYears(),
     ]);
+
+    const activeSchoolYear = schoolYears.find((y) => y.is_active) || schoolYears[0];
+    const birthYearConfigs = getPreschoolBirthYearsForSchoolYear(activeSchoolYear?.name);
+    const initialByYear: Record<string, { total: number; present: number; absent: number; boarding: number }> = {};
+    birthYearConfigs.forEach((by) => {
+      initialByYear[String(by.year)] = { total: 0, present: 0, absent: 0, boarding: 0 };
+    });
 
     const rawReports = localStorage.getItem(STORAGE_KEYS.REPORTS);
     const reports: DailyReport[] = rawReports ? JSON.parse(rawReports) : [];
@@ -1509,14 +1901,7 @@ export const StorageService = {
       presentMauGiao: 0,
       absentNhaTre: 0,
       absentMauGiao: 0,
-      byYear: {
-        '2026': { total: 0, present: 0, absent: 0, boarding: 0 },
-        '2025': { total: 0, present: 0, absent: 0, boarding: 0 },
-        '2024': { total: 0, present: 0, absent: 0, boarding: 0 },
-        '2023': { total: 0, present: 0, absent: 0, boarding: 0 },
-        '2022': { total: 0, present: 0, absent: 0, boarding: 0 },
-        '2021': { total: 0, present: 0, absent: 0, boarding: 0 },
-      },
+      byYear: initialByYear,
       healthIssueCount: 0,
       attendanceRate: 0,
       boardingRate: 0,

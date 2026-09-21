@@ -22,16 +22,17 @@ import {
   Unlock,
   Trash2
 } from 'lucide-react';
-import { SchoolYear } from '../types';
+import { SchoolYear, Profile } from '../types';
 import { PWAInstallButton } from '../components/PWAInstallButton';
 import { isSupabaseConnected } from '../services/supabase';
+import { removeVietnameseTones } from '../utils/vietnamese';
 
 interface LoginPageProps {
   onLoginSuccess: (targetPath?: string) => void;
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
-  const { currentUser, login, allUsers, switchUser } = useAuth();
+  const { currentUser, login, allUsers, switchUser, reloadUsers } = useAuth();
   const {
     settings,
     classes,
@@ -43,6 +44,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     deleteSchoolYear,
     toggleLockSchoolYear,
     preschoolGrades,
+    cleanDuplicateTeachers,
   } = useSchool();
 
   // Mode: GVCN (default) or ADMIN/BGH
@@ -66,6 +68,19 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   const [newYearName, setNewYearName] = useState('');
   const [yearError, setYearError] = useState('');
   const [isSavingYear, setIsSavingYear] = useState(false);
+
+  // Tự động dọn dẹp các tài khoản GVCN trùng lặp (nếu có) và tải lại người dùng khi mở trang đăng nhập
+  useEffect(() => {
+    const initClean = async () => {
+      try {
+        await cleanDuplicateTeachers();
+        await reloadUsers();
+      } catch (err) {
+        console.warn('Auto clean duplicate teachers on login error:', err);
+      }
+    };
+    initClean();
+  }, []);
 
   // Initialize selected class & teacher on mount
   useEffect(() => {
@@ -316,8 +331,35 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     }));
   }, [preschoolGrades, classes]);
 
-  // List of all GVCN users
-  const gvcnUsers = allUsers.filter((u) => u.role === 'GVCN');
+  // Danh sách GVCN đã được lọc trùng tên tuyệt đối (mỗi giáo viên chỉ xuất hiện đúng 1 lần)
+  const gvcnUsers = useMemo(() => {
+    const rawGvcn = allUsers.filter((u) => u.role === 'GVCN');
+    const sorted = [...rawGvcn].sort((a, b) => {
+      const aAssigned = classes.some((c) => c.id === a.assigned_class_id || c.homeroom_teacher_id === a.id) ? 1 : 0;
+      const bAssigned = classes.some((c) => c.id === b.assigned_class_id || c.homeroom_teacher_id === b.id) ? 1 : 0;
+      if (bAssigned !== aAssigned) return bAssigned - aAssigned;
+      const aPhone = a.phone ? 1 : 0;
+      const bPhone = b.phone ? 1 : 0;
+      if (bPhone !== aPhone) return bPhone - aPhone;
+      return a.full_name.localeCompare(b.full_name);
+    });
+
+    const result: Profile[] = [];
+    const seenNames = new Set<string>();
+
+    for (const u of sorted) {
+      const normName = removeVietnameseTones(u.full_name.trim().toLowerCase()).replace(/\s+/g, ' ');
+      if (!normName) continue;
+
+      if (seenNames.has(normName)) {
+        // Đã có giáo viên này trong danh sách -> bỏ qua ngay, tuyệt đối không hiển thị trùng lặp!
+        continue;
+      }
+      seenNames.add(normName);
+      result.push(u);
+    }
+    return result;
+  }, [allUsers, classes]);
 
   return (
     <div className="min-h-screen bg-linear-to-b from-slate-100 via-slate-50 to-slate-200 flex flex-col justify-center py-4 px-4 sm:px-6 lg:px-8">
@@ -498,12 +540,23 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                   </div>
                   <select
                     value={selectedTeacherId}
-                    onChange={(e) => setSelectedTeacherId(e.target.value)}
+                    onChange={(e) => {
+                      const newTeacherId = e.target.value;
+                      setSelectedTeacherId(newTeacherId);
+                      const matchedClass = classes.find(
+                        (c) => c.homeroom_teacher_id === newTeacherId || c.id === allUsers.find((u) => u.id === newTeacherId)?.assigned_class_id
+                      );
+                      if (matchedClass) {
+                        setSelectedClassId(matchedClass.id);
+                      }
+                    }}
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs font-semibold text-slate-800 bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors shadow-2xs"
                   >
                     <option value="" disabled>-- Vui lòng chọn giáo viên chủ nhiệm --</option>
                     {gvcnUsers.map((teacher) => {
-                      const teacherClass = classes.find((c) => c.id === teacher.assigned_class_id);
+                      const teacherClass = classes.find(
+                        (c) => c.id === teacher.assigned_class_id || c.homeroom_teacher_id === teacher.id
+                      );
                       return (
                         <option key={teacher.id} value={teacher.id}>
                           {teacher.full_name} {teacherClass ? `(Lớp ${teacherClass.class_name})` : ''}
@@ -513,31 +566,36 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                   </select>
 
                   {/* Teacher Info Preview Card */}
-                  {currentTeacher && (
-                    <div className="mt-2 p-2 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-xs flex-shrink-0 shadow-xs">
-                          {currentTeacher.full_name.charAt(0)}
+                  {currentTeacher && (() => {
+                    const teacherAssignedClass = classes.find(
+                      (c) => c.id === currentTeacher.assigned_class_id || c.homeroom_teacher_id === currentTeacher.id
+                    ) || currentClass;
+                    return (
+                      <div className="mt-2 p-2 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-xs flex-shrink-0 shadow-xs">
+                            {currentTeacher.full_name.charAt(0)}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-xs font-black text-slate-900 truncate">
+                              {currentTeacher.full_name}
+                            </div>
+                            <div className="text-[10px] text-blue-700 font-bold flex items-center gap-1 mt-0.5">
+                              <span>GVCN {teacherAssignedClass ? `Lớp ${teacherAssignedClass.class_name}` : ''}</span>
+                              <span>•</span>
+                              <span className="text-slate-500 font-medium">Năm học {activeYear?.name || '2026-2027'}</span>
+                            </div>
+                          </div>
                         </div>
-                        <div className="min-w-0">
-                          <div className="text-xs font-black text-slate-900 truncate">
-                            {currentTeacher.full_name}
-                          </div>
-                          <div className="text-[10px] text-blue-700 font-bold flex items-center gap-1 mt-0.5">
-                            <span>GVCN {currentClass ? `Lớp ${currentClass.class_name}` : ''}</span>
-                            <span>•</span>
-                            <span className="text-slate-500 font-medium">Năm học {activeYear?.name || '2026-2027'}</span>
-                          </div>
+                        <div className="flex-shrink-0">
+                          <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                            <Check className="w-2.5 h-2.5" />
+                            Sẵn sàng
+                          </span>
                         </div>
                       </div>
-                      <div className="flex-shrink-0">
-                        <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                          <Check className="w-2.5 h-2.5" />
-                          Sẵn sàng
-                        </span>
-                      </div>
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
 
                 {/* Big Action Button: Vào báo cáo sĩ số ngay */}

@@ -291,14 +291,149 @@ export interface PreschoolBirthYearConfig {
   description: string;
 }
 
-export const PRESCHOOL_BIRTH_YEARS: PreschoolBirthYearConfig[] = [
-  { year: 2026, label: 'Sinh 2026 (< 1 tuổi)', shortLabel: '2026 (<1T)', category: 'NHA_TRE', groupName: 'Nhóm trẻ sơ sinh', description: 'Trẻ dưới 12 tháng' },
-  { year: 2025, label: 'Sinh 2025 (1 - 2 tuổi)', shortLabel: '2025 (1-2T)', category: 'NHA_TRE', groupName: 'Nhóm trẻ bé', description: 'Trẻ 12 - 24 tháng' },
-  { year: 2024, label: 'Sinh 2024 (2 - 3 tuổi)', shortLabel: '2024 (2-3T)', category: 'NHA_TRE', groupName: 'Nhóm trẻ 24-36T', description: 'Trẻ 24 - 36 tháng' },
-  { year: 2023, label: 'Sinh 2023 (3 - 4 tuổi)', shortLabel: '2023 (3-4T)', category: 'MAU_GIAO', groupName: 'Độ tuổi 3 - 4 tuổi', description: 'Trẻ 3 - 4 tuổi' },
-  { year: 2022, label: 'Sinh 2022 (4 - 5 tuổi)', shortLabel: '2022 (4-5T)', category: 'MAU_GIAO', groupName: 'Độ tuổi 4 - 5 tuổi', description: 'Trẻ 4 - 5 tuổi' },
-  { year: 2021, label: 'Sinh 2021 (5 - 6 tuổi)', shortLabel: '2021 (5-6T)', category: 'MAU_GIAO', groupName: 'Mẫu giáo Lớn', description: 'Trẻ 5 - 6 tuổi (Lớp Lá)' },
-];
+/**
+ * Trích xuất năm đầu của năm học (ví dụ "2026-2027" -> 2026, "2025" -> 2025)
+ */
+export function parseSchoolStartYear(yearNameOrObj?: string | SchoolYear | null): number {
+  if (!yearNameOrObj) return 2026;
+  const name = typeof yearNameOrObj === 'string' ? yearNameOrObj : yearNameOrObj.name || '';
+  const match = name.match(/(\d{4})/);
+  if (match) {
+    const y = parseInt(match[1], 10);
+    if (!isNaN(y) && y >= 2000 && y <= 2100) return y;
+  }
+  return 2026;
+}
+
+/**
+ * Tự động tính toán và tịnh tiến danh mục năm sinh & độ tuổi theo Năm Học được cấu hình.
+ * Quy tắc chuẩn mầm non (năm học Y - (Y+1)):
+ * - Sinh năm Y: Dưới 1 tuổi (Nhà trẻ sơ sinh)
+ * - Sinh năm Y-1: 1 - 2 tuổi (Nhà trẻ bé)
+ * - Sinh năm Y-2: 2 - 3 tuổi (Nhà trẻ 24 - 36 tháng)
+ * - Sinh năm Y-3: 3 - 4 tuổi (Mẫu giáo Bé / Lớp Mầm)
+ * - Sinh năm Y-4: 4 - 5 tuổi (Mẫu giáo Nhỡ / Lớp Chồi)
+ * - Sinh năm Y-5: 5 - 6 tuổi (Mẫu giáo Lớn / Lớp Lá - phổ cập 5T)
+ */
+export function getPreschoolBirthYearsForSchoolYear(schoolYearNameOrObj?: string | SchoolYear | null): PreschoolBirthYearConfig[] {
+  const Y = parseSchoolStartYear(schoolYearNameOrObj);
+  return [
+    {
+      year: Y,
+      label: `Sinh ${Y} (< 1 tuổi)`,
+      shortLabel: `${Y} (<1T)`,
+      category: 'NHA_TRE',
+      groupName: 'Nhóm trẻ sơ sinh',
+      description: 'Trẻ dưới 12 tháng',
+    },
+    {
+      year: Y - 1,
+      label: `Sinh ${Y - 1} (1 - 2 tuổi)`,
+      shortLabel: `${Y - 1} (1-2T)`,
+      category: 'NHA_TRE',
+      groupName: 'Nhóm trẻ bé',
+      description: 'Trẻ 12 - 24 tháng',
+    },
+    {
+      year: Y - 2,
+      label: `Sinh ${Y - 2} (2 - 3 tuổi)`,
+      shortLabel: `${Y - 2} (2-3T)`,
+      category: 'NHA_TRE',
+      groupName: 'Nhóm trẻ 24-36T',
+      description: 'Trẻ 24 - 36 tháng',
+    },
+    {
+      year: Y - 3,
+      label: `Sinh ${Y - 3} (3 - 4 tuổi)`,
+      shortLabel: `${Y - 3} (3-4T)`,
+      category: 'MAU_GIAO',
+      groupName: 'Độ tuổi 3 - 4 tuổi',
+      description: 'Trẻ 3 - 4 tuổi (Lớp Mầm)',
+    },
+    {
+      year: Y - 4,
+      label: `Sinh ${Y - 4} (4 - 5 tuổi)`,
+      shortLabel: `${Y - 4} (4-5T)`,
+      category: 'MAU_GIAO',
+      groupName: 'Độ tuổi 4 - 5 tuổi',
+      description: 'Trẻ 4 - 5 tuổi (Lớp Chồi)',
+    },
+    {
+      year: Y - 5,
+      label: `Sinh ${Y - 5} (5 - 6 tuổi)`,
+      shortLabel: `${Y - 5} (5-6T)`,
+      category: 'MAU_GIAO',
+      groupName: 'Mẫu giáo Lớn',
+      description: 'Trẻ 5 - 6 tuổi (Lớp Lá, phổ cập GDMN 5 tuổi)',
+    },
+  ];
+}
+
+/**
+ * Tạo danh mục khối lớp mầm non mặc định tịnh tiến chuẩn theo Năm học
+ */
+export function getDefaultPreschoolGradesForSchoolYear(schoolYearNameOrObj?: string | SchoolYear | null): PreschoolGradeConfig[] {
+  const Y = parseSchoolStartYear(schoolYearNameOrObj);
+  return [
+    {
+      id: 'grade_nt',
+      code: 'NT',
+      grade_num: 1,
+      name: 'Khối Nhà trẻ',
+      category: 'NHA_TRE',
+      age_range: '24 - 36 tháng',
+      birth_years: [Y - 1, Y - 2],
+      description: `Nhóm trẻ từ 24 đến 36 tháng tuổi (Dưới 3 tuổi, sinh năm ${Y - 1}, ${Y - 2})`,
+      sort_order: 1,
+    },
+    {
+      id: 'grade_mg_be',
+      code: 'MG_BE',
+      grade_num: 2,
+      name: 'Khối Mẫu giáo Bé',
+      category: 'MAU_GIAO',
+      age_range: '3 - 4 tuổi',
+      birth_years: [Y - 3],
+      description: `Lớp Mẫu giáo Bé - 3 đến 4 tuổi (Lớp Mầm, sinh năm ${Y - 3})`,
+      sort_order: 2,
+    },
+    {
+      id: 'grade_mg_nho',
+      code: 'MG_NHO',
+      grade_num: 3,
+      name: 'Khối Mẫu giáo Nhỡ',
+      category: 'MAU_GIAO',
+      age_range: '4 - 5 tuổi',
+      birth_years: [Y - 4],
+      description: `Lớp Mẫu giáo Nhỡ - 4 đến 5 tuổi (Lớp Chồi, sinh năm ${Y - 4})`,
+      sort_order: 3,
+    },
+    {
+      id: 'grade_mg_lon',
+      code: 'MG_LON',
+      grade_num: 4,
+      name: 'Khối Mẫu giáo Lớn',
+      category: 'MAU_GIAO',
+      age_range: '5 - 6 tuổi',
+      birth_years: [Y - 5],
+      description: `Lớp Mẫu giáo Lớn - 5 đến 6 tuổi (Lớp Lá, sinh năm ${Y - 5}, phổ cập GDMN 5 tuổi)`,
+      sort_order: 4,
+    },
+    {
+      id: 'grade_mg_ghep',
+      code: 'MG_GHEP',
+      grade_num: 5,
+      name: 'Khối Mẫu giáo Ghép',
+      category: 'MAU_GIAO',
+      age_range: '3 - 6 tuổi',
+      birth_years: [Y - 3, Y - 4, Y - 5],
+      description: 'Lớp Mẫu giáo Ghép đa độ tuổi',
+      sort_order: 5,
+    },
+  ];
+}
+
+export const PRESCHOOL_BIRTH_YEARS: PreschoolBirthYearConfig[] = getPreschoolBirthYearsForSchoolYear('2026-2027');
 
 export interface PreschoolGradeConfig {
   id: string;
@@ -312,63 +447,7 @@ export interface PreschoolGradeConfig {
   sort_order: number;
 }
 
-export const DEFAULT_PRESCHOOL_GRADES: PreschoolGradeConfig[] = [
-  {
-    id: 'grade_nt',
-    code: 'NT',
-    grade_num: 1,
-    name: 'Khối Nhà trẻ',
-    category: 'NHA_TRE',
-    age_range: '24 - 36 tháng',
-    birth_years: [2025, 2024],
-    description: 'Nhóm trẻ từ 24 đến 36 tháng tuổi (Dưới 3 tuổi, sinh năm 2025, 2024)',
-    sort_order: 1,
-  },
-  {
-    id: 'grade_mg_be',
-    code: 'MG_BE',
-    grade_num: 2,
-    name: 'Khối Mẫu giáo Bé',
-    category: 'MAU_GIAO',
-    age_range: '3 - 4 tuổi',
-    birth_years: [2023],
-    description: 'Lớp Mẫu giáo Bé - 3 đến 4 tuổi (Lớp Mầm, sinh năm 2023)',
-    sort_order: 2,
-  },
-  {
-    id: 'grade_mg_nho',
-    code: 'MG_NHO',
-    grade_num: 3,
-    name: 'Khối Mẫu giáo Nhỡ',
-    category: 'MAU_GIAO',
-    age_range: '4 - 5 tuổi',
-    birth_years: [2022],
-    description: 'Lớp Mẫu giáo Nhỡ - 4 đến 5 tuổi (Lớp Chồi, sinh năm 2022)',
-    sort_order: 3,
-  },
-  {
-    id: 'grade_mg_lon',
-    code: 'MG_LON',
-    grade_num: 4,
-    name: 'Khối Mẫu giáo Lớn',
-    category: 'MAU_GIAO',
-    age_range: '5 - 6 tuổi',
-    birth_years: [2021],
-    description: 'Lớp Mẫu giáo Lớn - 5 đến 6 tuổi (Lớp Lá, sinh năm 2021, phổ cập GDMN 5 tuổi)',
-    sort_order: 4,
-  },
-  {
-    id: 'grade_mg_ghep',
-    code: 'MG_GHEP',
-    grade_num: 5,
-    name: 'Khối Mẫu giáo Ghép',
-    category: 'MAU_GIAO',
-    age_range: '3 - 6 tuổi',
-    birth_years: [2023, 2022, 2021],
-    description: 'Lớp Mẫu giáo Ghép đa độ tuổi',
-    sort_order: 5,
-  },
-];
+export const DEFAULT_PRESCHOOL_GRADES: PreschoolGradeConfig[] = getDefaultPreschoolGradesForSchoolYear('2026-2027');
 
 export const PRE_SCHOOL_AGE_GROUPS = [
   { code: 'NHA_TRE', label: 'Khối Nhà trẻ (24 - 36 tháng)', shortLabel: 'Nhà trẻ (24-36T)', grade: 1, category: 'NHA_TRE' },

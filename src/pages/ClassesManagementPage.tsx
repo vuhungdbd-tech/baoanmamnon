@@ -1,8 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useSchool } from '../contexts/SchoolContext';
 import { useAuth } from '../contexts/AuthContext';
 import { StorageService } from '../services/storage';
-import { ClassItem, Profile, Student, PreschoolGradeConfig } from '../types';
+import { ClassItem, Profile, Student, PreschoolGradeConfig, parseSchoolStartYear } from '../types';
+import { removeVietnameseTones, searchMatches } from '../utils/vietnamese';
 import {
   Layers,
   Plus,
@@ -12,6 +13,7 @@ import {
   Unlock,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   GraduationCap,
   Save,
   X,
@@ -53,8 +55,61 @@ export const ClassesManagementPage: React.FC = () => {
     updatePreschoolGrades,
     resetPreschoolGrades,
     refreshAll,
+    cleanDuplicateTeachers,
+    getDuplicateTeachersSummary,
   } = useSchool();
   const { allUsers, currentUser, isAdmin, isBGH, reloadUsers } = useAuth();
+
+  const startYear = useMemo(() => parseSchoolStartYear(activeYear?.name), [activeYear?.name]);
+
+  // Duplicate teacher management state
+  const [duplicateSummary, setDuplicateSummary] = useState<{
+    duplicateGroupsCount: number;
+    duplicateAccountsCount: number;
+    details: Array<{ name: string; count: number; ids: string[] }>;
+  }>({ duplicateGroupsCount: 0, duplicateAccountsCount: 0, details: [] });
+  const [isCleaningDuplicates, setIsCleaningDuplicates] = useState(false);
+  const [duplicateActionMsg, setDuplicateActionMsg] = useState<string | null>(null);
+
+  const refreshDuplicates = async () => {
+    try {
+      const summary = await getDuplicateTeachersSummary();
+      setDuplicateSummary(summary);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  useEffect(() => {
+    refreshDuplicates();
+  }, [allUsers]);
+
+  const handleCleanDuplicates = async () => {
+    if (
+      !window.confirm(
+        'Hệ thống sẽ tự động giữ lại tài khoản GVCN đang phân công cho lớp học (hoặc tài khoản có đầy đủ thông tin nhất) và dọn dẹp các tài khoản thừa trùng lặp họ tên. Bạn có chắc muốn thực hiện?'
+      )
+    ) {
+      return;
+    }
+    setIsCleaningDuplicates(true);
+    try {
+      const res = await cleanDuplicateTeachers();
+      await reloadUsers();
+      await refreshAll();
+      await refreshDuplicates();
+      if (res.removedCount > 0) {
+        setDuplicateActionMsg(`Đã dọn dẹp thành công ${res.removedCount} tài khoản trùng lặp (${res.cleanedNames.join(', ')}).`);
+      } else {
+        setDuplicateActionMsg('Không có tài khoản giáo viên nào bị trùng lặp cần dọn dẹp.');
+      }
+      setTimeout(() => setDuplicateActionMsg(null), 5000);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsCleaningDuplicates(false);
+    }
+  };
 
   // Filter & Search states
   const [searchQuery, setSearchQuery] = useState('');
@@ -206,10 +261,31 @@ export const ClassesManagementPage: React.FC = () => {
   const [bulkText, setBulkText] = useState('');
   const [bulkResultMsg, setBulkResultMsg] = useState<string | null>(null);
 
-  // Filter GVCN accounts
+  // Filter GVCN accounts with intelligent deduplication (keeps assigned teacher if duplicates exist)
   const gvcnList = useMemo(() => {
-    return allUsers.filter((u) => u.role === 'GVCN' || u.role === 'ADMIN' || u.role === 'BGH');
-  }, [allUsers]);
+    const list = allUsers.filter((u) => u.role === 'GVCN' || u.role === 'ADMIN' || u.role === 'BGH');
+    // Group GVCNs by normalized name
+    const seen = new Map<string, Profile>();
+    for (const u of list) {
+      if (u.role !== 'GVCN') {
+        seen.set(u.id, u);
+        continue;
+      }
+      const normName = removeVietnameseTones(u.full_name.trim().toLowerCase());
+      const existing = seen.get(normName);
+      if (!existing) {
+        seen.set(normName, u);
+      } else {
+        // Prefer one assigned to class
+        const uAssigned = classes.some((c) => c.homeroom_teacher_id === u.id || c.id === u.assigned_class_id);
+        const exAssigned = classes.some((c) => c.homeroom_teacher_id === existing.id || c.id === existing.assigned_class_id);
+        if (uAssigned && !exAssigned) {
+          seen.set(normName, u);
+        }
+      }
+    }
+    return Array.from(seen.values());
+  }, [allUsers, classes]);
 
   // Statistics
   const stats = useMemo(() => {
@@ -254,7 +330,7 @@ export const ClassesManagementPage: React.FC = () => {
       name: `Khối Mới ${maxGradeNum + 1}`,
       category: 'MAU_GIAO',
       age_range: '5 - 6 tuổi',
-      birth_years: [2021],
+      birth_years: [startYear - 5],
       description: 'Quy định độ tuổi mầm non',
       sort_order: gradeConfigsDraft.length + 1,
     };
@@ -335,16 +411,21 @@ export const ClassesManagementPage: React.FC = () => {
 
       // Search query (matches class name or teacher name)
       if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
         const teacher = allUsers.find((u) => u.id === c.homeroom_teacher_id);
-        const matchName = c.class_name.toLowerCase().includes(q);
-        const matchTeacher = teacher ? teacher.full_name.toLowerCase().includes(q) : false;
+        const matchName = searchMatches(c.class_name, searchQuery);
+        const matchTeacher = teacher ? searchMatches(teacher.full_name, searchQuery) : false;
         if (!matchName && !matchTeacher) return false;
       }
 
       return true;
     });
   }, [classes, selectedGrade, teacherFilter, searchQuery, allUsers]);
+
+  // Teachers matching query (for showing helpful hint if user searches teacher who has no class or is on another tab)
+  const matchingTeachersForQuery = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    return allUsers.filter((u) => u.role === 'GVCN' && searchMatches(u.full_name, searchQuery));
+  }, [allUsers, searchQuery]);
 
   // Initialize or reset inline edit draft
   const handleToggleInlineEdit = () => {
@@ -676,6 +757,19 @@ export const ClassesManagementPage: React.FC = () => {
               <span>Dán danh sách nhanh</span>
             </button>
 
+            {duplicateSummary.duplicateAccountsCount > 0 && (
+              <button
+                type="button"
+                onClick={handleCleanDuplicates}
+                disabled={isCleaningDuplicates}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-300 transition-colors shadow-2xs cursor-pointer disabled:opacity-50"
+                title="Dọn dẹp các tài khoản giáo viên bị trùng lặp"
+              >
+                <Sparkles className="w-4 h-4 text-amber-600" />
+                <span>{isCleaningDuplicates ? 'Đang dọn...' : 'Dọn GVCN trùng'}</span>
+              </button>
+            )}
+
             {/* Create class */}
             <button
               type="button"
@@ -688,6 +782,49 @@ export const ClassesManagementPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Duplicate Alert or Action Message */}
+      {duplicateActionMsg && (
+        <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+          <span>{duplicateActionMsg}</span>
+        </div>
+      )}
+
+      {duplicateSummary.duplicateAccountsCount > 0 && (
+        <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <h4 className="text-xs font-bold text-amber-900">
+                Phát hiện {duplicateSummary.duplicateAccountsCount} tài khoản GVCN bị trùng lặp họ tên
+              </h4>
+              <p className="text-[11px] text-amber-800 mt-0.5">
+                Các giáo viên trùng tên: <span className="font-semibold">{duplicateSummary.details.map(d => `${d.name} (${d.count} tài khoản)`).join(', ')}</span>.
+                Bấm nút bên cạnh để tự động giữ lại tài khoản có lớp và dọn dẹp các bản ghi thừa.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <a
+              href="#/users"
+              className="px-3.5 py-2 rounded-xl text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 shadow-2xs transition-colors inline-flex items-center gap-1"
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Quản lý tài khoản</span>
+            </a>
+            <button
+              type="button"
+              onClick={handleCleanDuplicates}
+              disabled={isCleaningDuplicates}
+              className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>{isCleaningDuplicates ? 'Đang dọn...' : '⚡ Dọn dẹp trùng lặp ngay'}</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 4 Summary Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
@@ -894,10 +1031,69 @@ export const ClassesManagementPage: React.FC = () => {
             <tbody className="divide-y divide-slate-100">
               {filteredClasses.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-slate-400">
-                    <Layers className="w-8 h-8 mx-auto mb-2 text-slate-300" />
-                    <p className="font-semibold">Không tìm thấy lớp học nào phù hợp</p>
-                    <p className="text-[11px] mt-1">Thử thay đổi bộ lọc khối hoặc từ khóa tìm kiếm</p>
+                  <td colSpan={7} className="py-8 px-4 text-center">
+                    {matchingTeachersForQuery.length > 0 ? (
+                      <div className="max-w-xl mx-auto bg-blue-50/80 border border-blue-200 rounded-2xl p-5 text-left shadow-xs">
+                        <div className="flex items-start gap-3.5">
+                          <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center flex-shrink-0 shadow-2xs">
+                            <User className="w-5 h-5" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="text-xs font-bold text-blue-950">
+                              Tìm thấy {matchingTeachersForQuery.length} tài khoản giáo viên có tên khớp với &ldquo;{searchQuery}&rdquo;:
+                            </h4>
+                            <div className="mt-2 space-y-1.5">
+                              {matchingTeachersForQuery.map((t) => {
+                                const assignedCls = classes.find(
+                                  (c) => c.homeroom_teacher_id === t.id || c.id === t.assigned_class_id
+                                );
+                                return (
+                                  <div
+                                    key={t.id}
+                                    className="flex flex-col sm:flex-row sm:items-center justify-between text-xs bg-white p-2.5 rounded-xl border border-blue-100 gap-1"
+                                  >
+                                    <div>
+                                      <span className="font-bold text-slate-900">{t.full_name}</span>
+                                      <span className="text-slate-500 text-[11px] ml-1.5 font-mono">({t.email})</span>
+                                      {t.phone && <span className="text-slate-500 text-[11px] ml-1.5">• SĐT: {t.phone}</span>}
+                                    </div>
+                                    <div className="text-[11px]">
+                                      {assignedCls ? (
+                                        <span className="font-bold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-md">
+                                          Lớp {assignedCls.class_name}
+                                        </span>
+                                      ) : (
+                                        <span className="text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md font-medium">
+                                          Chưa gán lớp nào
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            <p className="text-[11px] text-blue-800 mt-3 leading-relaxed">
+                              💡 Bạn hiện đang ở trang <strong>Cấu hình Lớp học</strong> (tìm theo tên lớp). Nếu bạn muốn kiểm tra, chỉnh sửa hoặc dọn dẹp danh sách tài khoản GVCN, hãy sang trang Quản lý tài khoản:
+                            </p>
+                            <div className="mt-3 flex items-center gap-2">
+                              <a
+                                href="#/users"
+                                className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs inline-flex items-center gap-1.5 shadow-xs transition-colors"
+                              >
+                                <Users className="w-3.5 h-3.5" />
+                                <span>Mở trang Quản lý tài khoản</span>
+                              </a>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-slate-400 py-6">
+                        <Layers className="w-8 h-8 mx-auto mb-2 text-slate-300" />
+                        <p className="font-semibold text-slate-600">Không tìm thấy lớp học nào phù hợp</p>
+                        <p className="text-[11px] text-slate-400 mt-1">Thử thay đổi bộ lọc khối hoặc từ khóa tìm kiếm</p>
+                      </div>
+                    )}
                   </td>
                 </tr>
               ) : (
@@ -1767,7 +1963,7 @@ export const ClassesManagementPage: React.FC = () => {
                                   .filter((y) => !isNaN(y));
                                 handleUpdateGradeDraft(idx, 'birth_years', years);
                               }}
-                              placeholder="2024, 2025"
+                              placeholder={`${startYear - 2}, ${startYear - 1}`}
                               className="w-full px-2.5 py-1.5 text-xs font-mono border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                             />
                           </td>

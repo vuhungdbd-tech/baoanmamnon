@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useSchool } from '../contexts/SchoolContext';
 import { Profile, UserRole, TeachingScope } from '../types';
 import { StorageService } from '../services/storage';
 import { getTeacherAllowedScope, getClassCategory, getScopeLabel } from '../utils/preschoolPermissions';
+import { removeVietnameseTones, searchMatches } from '../utils/vietnamese';
 import {
   Users,
   ShieldCheck,
@@ -17,23 +18,34 @@ import {
   Search,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   Phone,
   Mail,
   Baby,
   Sparkles,
   Lock,
+  UserCheck,
+  RefreshCw,
 } from 'lucide-react';
 
 export const UsersManagementPage: React.FC = () => {
   const { allUsers, currentUser, isAdmin, isBGH, switchUser, reloadUsers } = useAuth();
-  const { classes, updateClass, refreshAll, preschoolGrades } = useSchool();
+  const { classes, updateClass, refreshAll, preschoolGrades, cleanDuplicateTeachers, getDuplicateTeachersSummary } = useSchool();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<'ALL' | UserRole>('ALL');
-  const [scopeFilter, setScopeFilter] = useState<'ALL' | 'NHA_TRE' | 'MAU_GIAO'>('ALL');
+  const [scopeFilter, setScopeFilter] = useState<'ALL' | 'NHA_TRE' | 'MAU_GIAO' | 'UNASSIGNED'>('ALL');
 
   const [editingUser, setEditingUser] = useState<Profile | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+
+  // Trạng thái kiểm tra & dọn dẹp tài khoản trùng lặp
+  const [duplicateSummary, setDuplicateSummary] = useState<{
+    duplicateGroupsCount: number;
+    duplicateAccountsCount: number;
+    details: Array<{ name: string; count: number; ids: string[] }>;
+  }>({ duplicateGroupsCount: 0, duplicateAccountsCount: 0, details: [] });
+  const [isCleaningDuplicates, setIsCleaningDuplicates] = useState(false);
 
   // Form states
   const [formEmail, setFormEmail] = useState('');
@@ -47,6 +59,54 @@ export const UsersManagementPage: React.FC = () => {
   const [successMsg, setSuccessMsg] = useState('');
 
   const canManage = isAdmin || isBGH;
+
+  const refreshDuplicates = async () => {
+    try {
+      const summary = await getDuplicateTeachersSummary();
+      setDuplicateSummary(summary);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  useEffect(() => {
+    refreshDuplicates();
+  }, [allUsers]);
+
+  const handleCleanDuplicates = async () => {
+    if (!window.confirm('Hệ thống sẽ tự động giữ lại tài khoản GVCN đang phụ trách lớp (hoặc tài khoản có đầy đủ thông tin nhất), và dọn dẹp các tài khoản thừa trùng lặp. Bạn có muốn thực hiện không?')) {
+      return;
+    }
+    setIsCleaningDuplicates(true);
+    try {
+      const res = await cleanDuplicateTeachers();
+      await reloadUsers();
+      await refreshAll();
+      await refreshDuplicates();
+      if (res.removedCount > 0) {
+        setSuccessMsg(`Đã dọn dẹp thành công ${res.removedCount} tài khoản thừa trùng lặp (${res.cleanedNames.join(', ')}).`);
+      } else {
+        setSuccessMsg('Không phát hiện tài khoản GVCN nào bị trùng lặp cần dọn dẹp.');
+      }
+      setTimeout(() => setSuccessMsg(''), 5000);
+    } catch (e) {
+      setFormError('Lỗi khi dọn dẹp tài khoản trùng lặp.');
+    } finally {
+      setIsCleaningDuplicates(false);
+    }
+  };
+
+  // Bản đồ đếm số lần xuất hiện của từng tên giáo viên
+  const duplicateNameCountMap = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const u of allUsers) {
+      if (u.role === 'GVCN') {
+        const key = removeVietnameseTones(u.full_name.trim().toLowerCase());
+        map.set(key, (map.get(key) || 0) + 1);
+      }
+    }
+    return map;
+  }, [allUsers]);
 
   const handleOpenEdit = (user: Profile) => {
     setEditingUser(user);
@@ -81,10 +141,12 @@ export const UsersManagementPage: React.FC = () => {
       setFormError('Vui lòng nhập họ và tên.');
       return;
     }
-    if (!formEmail.trim()) {
-      setFormError('Vui lòng nhập email đăng nhập.');
-      return;
-    }
+
+    const emailToUse = formEmail.trim()
+      ? formEmail.trim().toLowerCase()
+      : isCreating
+      ? `gv_${Date.now()}@db.edu.vn`
+      : editingUser?.email || `gv_${Date.now()}@db.edu.vn`;
 
     try {
       let targetUserId = editingUser?.id;
@@ -94,7 +156,7 @@ export const UsersManagementPage: React.FC = () => {
         const newProfile: Profile = {
           id: targetUserId,
           full_name: formFullName.trim(),
-          email: formEmail.trim().toLowerCase(),
+          email: emailToUse,
           phone: formPhone.trim() || undefined,
           role: formRole,
           assigned_class_id: formRole === 'GVCN' && formClassId ? formClassId : undefined,
@@ -107,7 +169,7 @@ export const UsersManagementPage: React.FC = () => {
         const updatedProfile: Profile = {
           ...editingUser,
           full_name: formFullName.trim(),
-          email: formEmail.trim().toLowerCase(),
+          email: emailToUse,
           phone: formPhone.trim() || undefined,
           role: formRole,
           assigned_class_id: formRole === 'GVCN' && formClassId ? formClassId : undefined,
@@ -167,31 +229,45 @@ export const UsersManagementPage: React.FC = () => {
 
   // Filtered user list
   const filteredUsers = allUsers.filter((u) => {
-    if (roleFilter !== 'ALL' && u.role !== roleFilter) return false;
+    if (roleFilter !== 'ALL' && u.role !== roleFilter) {
+      return false;
+    }
     if (scopeFilter !== 'ALL') {
       if (u.role !== 'GVCN') return false;
-      const uScope = u.teaching_scope || getTeacherAllowedScope(u, classes, preschoolGrades);
-      if (uScope !== scopeFilter && uScope !== 'ALL') return false;
+      if (scopeFilter === 'UNASSIGNED') {
+        const isAssigned = !!u.assigned_class_id || classes.some((c) => c.homeroom_teacher_id === u.id);
+        if (isAssigned) return false;
+      } else {
+        const uScope = u.teaching_scope || getTeacherAllowedScope(u, classes, preschoolGrades);
+        if (uScope !== scopeFilter && uScope !== 'ALL') {
+          return false;
+        }
+      }
     }
     if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim();
-      const matchName = u.full_name.toLowerCase().includes(q);
-      const matchEmail = u.email.toLowerCase().includes(q);
-      const matchPhone = u.phone ? u.phone.includes(q) : false;
-      const assignedClass = classes.find((c) => c.id === u.assigned_class_id);
-      const matchClass = assignedClass ? assignedClass.class_name.toLowerCase().includes(q) : false;
-      if (!matchName && !matchEmail && !matchPhone && !matchClass) return false;
+      const assignedClass = classes.find((c) => c.id === u.assigned_class_id || c.homeroom_teacher_id === u.id);
+      const match =
+        searchMatches(u.full_name, searchQuery) ||
+        searchMatches(u.email, searchQuery) ||
+        searchMatches(u.phone, searchQuery) ||
+        searchMatches(assignedClass?.class_name, searchQuery);
+      if (!match) return false;
     }
     return true;
   });
 
+  const gvcnAllCount = allUsers.filter((u) => u.role === 'GVCN').length;
+  const unassignedGvcnCount = allUsers.filter(
+    (u) => u.role === 'GVCN' && !u.assigned_class_id && !classes.some((c) => c.homeroom_teacher_id === u.id)
+  ).length;
   const nhaTreTeachersCount = allUsers.filter(
     (u) => u.role === 'GVCN' && (u.teaching_scope === 'NHA_TRE' || getTeacherAllowedScope(u, classes, preschoolGrades) === 'NHA_TRE')
   ).length;
-
   const mauGiaoTeachersCount = allUsers.filter(
     (u) => u.role === 'GVCN' && (u.teaching_scope === 'MAU_GIAO' || getTeacherAllowedScope(u, classes, preschoolGrades) === 'MAU_GIAO')
   ).length;
+  const bghCount = allUsers.filter((u) => u.role === 'BGH').length;
+  const adminCount = allUsers.filter((u) => u.role === 'ADMIN').length;
 
   return (
     <div className="space-y-6">
@@ -214,16 +290,56 @@ export const UsersManagementPage: React.FC = () => {
         </div>
 
         {canManage && (
-          <button
-            type="button"
-            onClick={handleOpenCreate}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-xs transition-colors cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Tạo tài khoản mới</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleCleanDuplicates}
+              disabled={isCleaningDuplicates}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-300 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+              title="Tự động kiểm tra và dọn dẹp các tài khoản GVCN bị trùng họ tên"
+            >
+              <Sparkles className="w-4 h-4 text-amber-600" />
+              <span>{isCleaningDuplicates ? 'Đang dọn dẹp...' : 'Dọn dẹp tài khoản trùng'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleOpenCreate}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-xs transition-colors cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Tạo tài khoản mới</span>
+            </button>
+          </div>
         )}
       </div>
+
+      {/* Duplicate Accounts Alert Banner */}
+      {duplicateSummary.duplicateAccountsCount > 0 && (
+        <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <h4 className="text-xs font-bold text-amber-900">
+                Phát hiện {duplicateSummary.duplicateAccountsCount} tài khoản GVCN bị trùng lặp họ tên
+              </h4>
+              <p className="text-[11px] text-amber-800 mt-0.5">
+                Các giáo viên trùng tên: <span className="font-semibold">{duplicateSummary.details.map(d => `${d.name} (${d.count} tài khoản)`).join(', ')}</span>.
+                Bấm nút bên cạnh để tự động giữ lại tài khoản có lớp và dọn dẹp các bản ghi thừa.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleCleanDuplicates}
+            disabled={isCleaningDuplicates}
+            className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 shadow-xs transition-colors flex items-center justify-center gap-1.5 flex-shrink-0 cursor-pointer disabled:opacity-50"
+          >
+            <Sparkles className="w-4 h-4" />
+            <span>{isCleaningDuplicates ? 'Đang dọn dẹp...' : '⚡ Dọn dẹp trùng lặp ngay'}</span>
+          </button>
+        </div>
+      )}
 
       {successMsg && (
         <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center gap-2">
@@ -246,6 +362,18 @@ export const UsersManagementPage: React.FC = () => {
               }`}
             >
               Tất cả ({allUsers.length})
+            </button>
+
+            <button
+              onClick={() => { setRoleFilter('GVCN'); setScopeFilter('ALL'); }}
+              className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                roleFilter === 'GVCN' && scopeFilter === 'ALL'
+                  ? 'bg-emerald-600 text-white shadow-2xs'
+                  : 'bg-emerald-50 text-emerald-900 border border-emerald-200 hover:bg-emerald-100'
+              }`}
+            >
+              <GraduationCap className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Tất cả GVCN ({gvcnAllCount})</span>
             </button>
 
             <button
@@ -272,6 +400,20 @@ export const UsersManagementPage: React.FC = () => {
               <span>GV Mẫu giáo ({mauGiaoTeachersCount})</span>
             </button>
 
+            {unassignedGvcnCount > 0 && (
+              <button
+                onClick={() => { setRoleFilter('GVCN'); setScopeFilter('UNASSIGNED'); }}
+                className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  roleFilter === 'GVCN' && scopeFilter === 'UNASSIGNED'
+                    ? 'bg-rose-600 text-white shadow-2xs'
+                    : 'bg-rose-50 text-rose-900 border border-rose-200 hover:bg-rose-100'
+                }`}
+              >
+                <AlertCircle className="w-3.5 h-3.5 text-rose-500" />
+                <span>Chưa gán lớp ({unassignedGvcnCount})</span>
+              </button>
+            )}
+
             <button
               onClick={() => { setRoleFilter('BGH'); setScopeFilter('ALL'); }}
               className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
@@ -280,7 +422,7 @@ export const UsersManagementPage: React.FC = () => {
                   : 'bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100'
               }`}
             >
-              BGH ({allUsers.filter((u) => u.role === 'BGH').length})
+              BGH ({bghCount})
             </button>
 
             <button
@@ -291,7 +433,7 @@ export const UsersManagementPage: React.FC = () => {
                   : 'bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100'
               }`}
             >
-              ADMIN ({allUsers.filter((u) => u.role === 'ADMIN').length})
+              ADMIN ({adminCount})
             </button>
           </div>
 
@@ -328,9 +470,10 @@ export const UsersManagementPage: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredUsers.map((u) => {
-                const assignedClass = classes.find((c) => c.id === u.assigned_class_id);
+                const assignedClass = classes.find((c) => c.id === u.assigned_class_id || c.homeroom_teacher_id === u.id);
                 const isCurrent = currentUser?.id === u.id;
                 const effectiveScope = u.teaching_scope || getTeacherAllowedScope(u, classes, preschoolGrades);
+                const duplicateCount = duplicateNameCountMap.get(removeVietnameseTones(u.full_name.trim().toLowerCase())) || 0;
 
                 return (
                   <tr key={u.id} className={`hover:bg-slate-50 ${isCurrent ? 'bg-blue-50/40 font-medium' : ''}`}>
@@ -340,8 +483,18 @@ export const UsersManagementPage: React.FC = () => {
                           {u.full_name.charAt(0)}
                         </div>
                         <div>
-                          <div className="font-bold text-slate-900">{u.full_name}</div>
-                          {isCurrent && <span className="text-[10px] text-blue-600 font-bold">(Bạn)</span>}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-bold text-slate-900">{u.full_name}</span>
+                            {isCurrent && <span className="text-[10px] text-blue-600 font-bold">(Bạn)</span>}
+                            {u.role === 'GVCN' && duplicateCount > 1 && (
+                              <span
+                                className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300"
+                                title="Họ tên này xuất hiện nhiều lần trong hệ thống"
+                              >
+                                Trùng tên ({duplicateCount})
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </td>

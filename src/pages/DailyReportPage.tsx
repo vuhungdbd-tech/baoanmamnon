@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSchool } from '../contexts/SchoolContext';
 import { useAuth } from '../contexts/AuthContext';
 import { StorageService, subscribeRealtime } from '../services/storage';
-import { ClassReportRow, PreschoolDailyData, PreschoolSchoolTotals, getPreschoolGradeLabel, PRESCHOOL_BIRTH_YEARS } from '../types';
+import { ClassReportRow, PreschoolDailyData, PreschoolSchoolTotals, getPreschoolGradeLabel, PRESCHOOL_BIRTH_YEARS, parseSchoolStartYear, getPreschoolBirthYearsForSchoolYear } from '../types';
 import { DateNavigator } from '../components/DateNavigator';
 import { CampusSelector } from '../components/CampusSelector';
 import ExcelJS from 'exceljs';
@@ -33,10 +33,23 @@ interface DailyReportPageProps {
 }
 
 export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) => {
-  const { settings, indicators, campuses, classes, students, preschoolGrades } = useSchool();
+  const { settings, indicators, campuses, classes, students, preschoolGrades, activeYear } = useSchool();
   const { isGVCN, currentUser } = useAuth();
   const isAdmin = currentUser?.role === 'ADMIN';
   const isBGH = currentUser?.role === 'BGH';
+
+  const startYear = useMemo(() => {
+    return parseSchoolStartYear(activeYear?.name);
+  }, [activeYear?.name]);
+
+  // Năm sinh tịnh tiến theo Năm học:
+  // Nhà trẻ: startYear - 1, startYear - 2
+  // Mẫu giáo: startYear - 3 (3-4T Bé), startYear - 4 (4-5T Nhỡ), startYear - 5 (5-6T Lớn)
+  const yNt1 = String(startYear - 1);
+  const yNt2 = String(startYear - 2);
+  const yMgBe = String(startYear - 3);
+  const yMgNho = String(startYear - 4);
+  const yMgLon = String(startYear - 5);
 
   const [selectedDate, setSelectedDate] = useState(() => {
     const d = new Date();
@@ -266,12 +279,12 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
       absentNhaTre: 0,
       absentMauGiao: 0,
       byYear: {
-        '2026': { total: 0, present: 0, absent: 0, boarding: 0 },
-        '2025': { total: 0, present: 0, absent: 0, boarding: 0 },
-        '2024': { total: 0, present: 0, absent: 0, boarding: 0 },
-        '2023': { total: 0, present: 0, absent: 0, boarding: 0 },
-        '2022': { total: 0, present: 0, absent: 0, boarding: 0 },
-        '2021': { total: 0, present: 0, absent: 0, boarding: 0 },
+        [String(startYear)]: { total: 0, present: 0, absent: 0, boarding: 0 },
+        [yNt1]: { total: 0, present: 0, absent: 0, boarding: 0 },
+        [yNt2]: { total: 0, present: 0, absent: 0, boarding: 0 },
+        [yMgBe]: { total: 0, present: 0, absent: 0, boarding: 0 },
+        [yMgNho]: { total: 0, present: 0, absent: 0, boarding: 0 },
+        [yMgLon]: { total: 0, present: 0, absent: 0, boarding: 0 },
       },
     };
 
@@ -345,7 +358,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
     totals.attendanceRate = totals.totalStudents > 0 ? (totals.presentStudents / totals.totalStudents) * 100 : 0;
     totals.boardingRate = totals.presentStudents > 0 ? (totals.boardingCount / totals.presentStudents) * 100 : 0;
     return totals;
-  }, [reportData, allIndicator, boardingIndicator]);
+  }, [reportData, allIndicator, boardingIndicator, startYear]);
 
   // Helper to detect Nhà Trẻ class (NT...)
   const isNhaTreClass = (clsName: string, grade?: any): boolean => {
@@ -376,8 +389,8 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
   // Subtotal for Khối Nhà Trẻ (Row 6 in the original image)
   const nhaTreSubtotal = useMemo(() => {
     let boardingNT = 0;
-    let y2025 = 0;
-    let y2024 = 0;
+    let yNt1Val = 0;
+    let yNt2Val = 0;
     let present = 0;
     let total = 0;
     let sickCount = 0;
@@ -397,10 +410,10 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
         const b = ps?.boarding_nha_tre ?? ps?.boarding_count ?? (boardingIndicator ? (row.values[boardingIndicator.id]?.total || 0) : 0);
         boardingNT += b;
 
-        const st25 = ps?.age_stats?.['2025'];
-        const st24 = ps?.age_stats?.['2024'];
-        y2025 += Number(st25?.present ?? st25?.total ?? 0);
-        y2024 += Number(st24?.present ?? st24?.total ?? 0);
+        const stNt1 = ps?.age_stats?.[yNt1];
+        const stNt2 = ps?.age_stats?.[yNt2];
+        yNt1Val += Number(stNt1?.present ?? stNt1?.total ?? 0);
+        yNt2Val += Number(stNt2?.present ?? stNt2?.total ?? 0);
 
         const sick = (ps?.health_issue_count || 0) + (row.report?.absent_students?.filter((s: any) => {
           const r = (s.reason || '').toLowerCase();
@@ -410,8 +423,8 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
       }
     });
 
-    return { boardingNT, y2025, y2024, present, total, sickCount };
-  }, [sortedClassesForTemplate, allIndicator, boardingIndicator]);
+    return { boardingNT, yNt1Val, yNt2Val, present, total, sickCount };
+  }, [sortedClassesForTemplate, allIndicator, boardingIndicator, yNt1, yNt2]);
 
   // Handle Print
   const handlePrint = () => {
@@ -548,11 +561,11 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
           { col: 'B', title: 'Lớp' },
           { col: 'C', title: 'Ăn nhà trẻ' },
           { col: 'D', title: 'Ăn mẫu giáo' },
-          { col: 'E', title: '2025' },
-          { col: 'F', title: '2024' },
-          { col: 'G', title: '2023' },
-          { col: 'H', title: '2022' },
-          { col: 'I', title: '2021' },
+          { col: 'E', title: yNt1 },
+          { col: 'F', title: yNt2 },
+          { col: 'G', title: yMgBe },
+          { col: 'H', title: yMgNho },
+          { col: 'I', title: yMgLon },
           { col: 'J', title: 'Tổng số trẻ đi học', yellow: true },
           { col: 'K', title: 'Tổng số trẻ của lớp', yellow: true },
           { col: 'L', title: 'Tỷ lệ trẻ đi học', yellow: true },
@@ -602,17 +615,17 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
 
           // Năm sinh
           if (isNT) {
-            r.getCell('E').value = isReported && !exportBlankTemplate ? (ps?.age_stats?.['2025']?.present ?? ps?.age_stats?.['2025']?.total ?? '') : '';
-            r.getCell('F').value = isReported && !exportBlankTemplate ? (ps?.age_stats?.['2024']?.present ?? ps?.age_stats?.['2024']?.total ?? '') : '';
+            r.getCell('E').value = isReported && !exportBlankTemplate ? (ps?.age_stats?.[yNt1]?.present ?? ps?.age_stats?.[yNt1]?.total ?? '') : '';
+            r.getCell('F').value = isReported && !exportBlankTemplate ? (ps?.age_stats?.[yNt2]?.present ?? ps?.age_stats?.[yNt2]?.total ?? '') : '';
             r.getCell('G').value = '';
             r.getCell('H').value = '';
             r.getCell('I').value = '';
           } else {
             r.getCell('E').value = '';
             r.getCell('F').value = '';
-            r.getCell('G').value = isReported && !exportBlankTemplate ? (ps?.age_stats?.['2023']?.present ?? ps?.age_stats?.['2023']?.total ?? '') : '';
-            r.getCell('H').value = isReported && !exportBlankTemplate ? (ps?.age_stats?.['2022']?.present ?? ps?.age_stats?.['2022']?.total ?? '') : '';
-            r.getCell('I').value = isReported && !exportBlankTemplate ? (ps?.age_stats?.['2021']?.present ?? ps?.age_stats?.['2021']?.total ?? '') : '';
+            r.getCell('G').value = isReported && !exportBlankTemplate ? (ps?.age_stats?.[yMgBe]?.present ?? ps?.age_stats?.[yMgBe]?.total ?? '') : '';
+            r.getCell('H').value = isReported && !exportBlankTemplate ? (ps?.age_stats?.[yMgNho]?.present ?? ps?.age_stats?.[yMgNho]?.total ?? '') : '';
+            r.getCell('I').value = isReported && !exportBlankTemplate ? (ps?.age_stats?.[yMgLon]?.present ?? ps?.age_stats?.[yMgLon]?.total ?? '') : '';
           }
 
           // Cột Vàng: Tổng số trẻ đi học (Tô màu VÀNG rực rỡ FFFFFF00 như trong ảnh)
@@ -671,11 +684,11 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
           grandRow.getCell('A').value = 'TỔNG CỘNG TOÀN TRƯỜNG';
           grandRow.getCell('C').value = preschoolTotals.boardingNhaTre || 0;
           grandRow.getCell('D').value = preschoolTotals.boardingMauGiao || 0;
-          grandRow.getCell('E').value = preschoolTotals.byYear?.['2025']?.present || preschoolTotals.byYear?.['2025']?.total || 0;
-          grandRow.getCell('F').value = preschoolTotals.byYear?.['2024']?.present || preschoolTotals.byYear?.['2024']?.total || 0;
-          grandRow.getCell('G').value = preschoolTotals.byYear?.['2023']?.present || preschoolTotals.byYear?.['2023']?.total || 0;
-          grandRow.getCell('H').value = preschoolTotals.byYear?.['2022']?.present || preschoolTotals.byYear?.['2022']?.total || 0;
-          grandRow.getCell('I').value = preschoolTotals.byYear?.['2021']?.present || preschoolTotals.byYear?.['2021']?.total || 0;
+          grandRow.getCell('E').value = preschoolTotals.byYear?.[yNt1]?.present || preschoolTotals.byYear?.[yNt1]?.total || 0;
+          grandRow.getCell('F').value = preschoolTotals.byYear?.[yNt2]?.present || preschoolTotals.byYear?.[yNt2]?.total || 0;
+          grandRow.getCell('G').value = preschoolTotals.byYear?.[yMgBe]?.present || preschoolTotals.byYear?.[yMgBe]?.total || 0;
+          grandRow.getCell('H').value = preschoolTotals.byYear?.[yMgNho]?.present || preschoolTotals.byYear?.[yMgNho]?.total || 0;
+          grandRow.getCell('I').value = preschoolTotals.byYear?.[yMgLon]?.present || preschoolTotals.byYear?.[yMgLon]?.total || 0;
           grandRow.getCell('J').value = preschoolTotals.presentStudents;
           grandRow.getCell('K').value = preschoolTotals.totalStudents;
           grandRow.getCell('L').value = preschoolTotals.attendanceRate.toFixed(2).replace('.', ',');
@@ -1365,8 +1378,8 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
             </div>
           </div>
           <div className="flex items-center justify-between text-[11px] mt-2 pt-2 border-t border-amber-100 text-amber-900">
-            <span>Sinh 2025: <b>{preschoolTotals.byYear?.['2025']?.present || 0}</b>/{preschoolTotals.byYear?.['2025']?.total || 0} (ăn: {preschoolTotals.byYear?.['2025']?.boarding || 0})</span>
-            <span>Sinh 2024: <b>{preschoolTotals.byYear?.['2024']?.present || 0}</b>/{preschoolTotals.byYear?.['2024']?.total || 0} (ăn: {preschoolTotals.byYear?.['2024']?.boarding || 0})</span>
+            <span>Sinh {yNt1}: <b>{preschoolTotals.byYear?.[yNt1]?.present || 0}</b>/{preschoolTotals.byYear?.[yNt1]?.total || 0} (ăn: {preschoolTotals.byYear?.[yNt1]?.boarding || 0})</span>
+            <span>Sinh {yNt2}: <b>{preschoolTotals.byYear?.[yNt2]?.present || 0}</b>/{preschoolTotals.byYear?.[yNt2]?.total || 0} (ăn: {preschoolTotals.byYear?.[yNt2]?.boarding || 0})</span>
           </div>
         </div>
 
@@ -1396,9 +1409,9 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
             </div>
           </div>
           <div className="flex items-center justify-between text-[11px] mt-2 pt-2 border-t border-teal-100 text-teal-900">
-            <span>2023: <b>{preschoolTotals.byYear?.['2023']?.present || 0}</b> (ăn: {preschoolTotals.byYear?.['2023']?.boarding || 0})</span>
-            <span>2022: <b>{preschoolTotals.byYear?.['2022']?.present || 0}</b> (ăn: {preschoolTotals.byYear?.['2022']?.boarding || 0})</span>
-            <span>2021: <b>{preschoolTotals.byYear?.['2021']?.present || 0}</b> (ăn: {preschoolTotals.byYear?.['2021']?.boarding || 0})</span>
+            <span>{yMgBe}: <b>{preschoolTotals.byYear?.[yMgBe]?.present || 0}</b> (ăn: {preschoolTotals.byYear?.[yMgBe]?.boarding || 0})</span>
+            <span>{yMgNho}: <b>{preschoolTotals.byYear?.[yMgNho]?.present || 0}</b> (ăn: {preschoolTotals.byYear?.[yMgNho]?.boarding || 0})</span>
+            <span>{yMgLon}: <b>{preschoolTotals.byYear?.[yMgLon]?.present || 0}</b> (ăn: {preschoolTotals.byYear?.[yMgLon]?.boarding || 0})</span>
           </div>
         </div>
       </div>
@@ -1419,7 +1432,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            ★ Mẫu báo cáo gốc (Hình ảnh Excel: Sĩ số, Ăn NT/MG, 2025-2021, Cột Vàng)
+            ★ Mẫu báo cáo gốc (Hình ảnh Excel: Sĩ số, Ăn NT/MG, {yNt1}-{yMgLon}, Cột Vàng)
           </button>
           <button
             type="button"
@@ -1507,7 +1520,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
               </h2>
               <p className="text-xs italic text-slate-700 font-serif mt-1">
                 {viewMode === 'PRESCHOOL_AGE_BOARDING'
-                  ? '(Biểu thống kê chi tiết theo độ tuổi & khẩu phần ăn: Khối Nhà trẻ, Khối Mẫu giáo, Trẻ sinh 2025 - 2021)'
+                  ? `(Biểu thống kê chi tiết theo độ tuổi & khẩu phần ăn: Khối Nhà trẻ, Khối Mẫu giáo, Trẻ sinh ${yNt1} - ${yMgLon})`
                   : viewMode === 'PRESCHOOL_DETAILED'
                   ? '(Biểu thống kê tổng hợp số liệu trẻ theo dõi hàng ngày - 24 cột chuẩn giáo dục Mầm Non)'
                   : '(Biểu thống kê sĩ số & bán trú mầm non rút gọn)'}
@@ -1527,11 +1540,11 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                   <th className="border border-black px-2 py-2 min-w-[140px] text-center">Lớp</th>
                   <th className="border border-black px-1.5 py-2 min-w-[75px] text-center">Ăn nhà trẻ</th>
                   <th className="border border-black px-1.5 py-2 min-w-[75px] text-center">Ăn mẫu giáo</th>
-                  <th className="border border-black px-1.5 py-2 min-w-[45px] text-center">2025</th>
-                  <th className="border border-black px-1.5 py-2 min-w-[45px] text-center">2024</th>
-                  <th className="border border-black px-1.5 py-2 min-w-[45px] text-center">2023</th>
-                  <th className="border border-black px-1.5 py-2 min-w-[45px] text-center">2022</th>
-                  <th className="border border-black px-1.5 py-2 min-w-[45px] text-center">2021</th>
+                  <th className="border border-black px-1.5 py-2 min-w-[45px] text-center">{yNt1}</th>
+                  <th className="border border-black px-1.5 py-2 min-w-[45px] text-center">{yNt2}</th>
+                  <th className="border border-black px-1.5 py-2 min-w-[45px] text-center">{yMgBe}</th>
+                  <th className="border border-black px-1.5 py-2 min-w-[45px] text-center">{yMgNho}</th>
+                  <th className="border border-black px-1.5 py-2 min-w-[45px] text-center">{yMgLon}</th>
                   <th className="border border-black px-2 py-2 min-w-[85px] text-center bg-[#FFFF00] font-black text-black">
                     Tổng số trẻ đi học
                   </th>
@@ -1621,29 +1634,29 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                         {!isNT ? (isReported ? boardingVal : '') : ''}
                       </td>
 
-                      {/* 2025 */}
+                      {/* yNt1 */}
                       <td className="border border-black py-1.5 px-1 text-center">
-                        {isNT && isReported ? (ps?.age_stats?.['2025']?.present ?? ps?.age_stats?.['2025']?.total ?? '') : ''}
+                        {isNT && isReported ? (ps?.age_stats?.[yNt1]?.present ?? ps?.age_stats?.[yNt1]?.total ?? '') : ''}
                       </td>
 
-                      {/* 2024 */}
+                      {/* yNt2 */}
                       <td className="border border-black py-1.5 px-1 text-center">
-                        {isNT && isReported ? (ps?.age_stats?.['2024']?.present ?? ps?.age_stats?.['2024']?.total ?? '') : ''}
+                        {isNT && isReported ? (ps?.age_stats?.[yNt2]?.present ?? ps?.age_stats?.[yNt2]?.total ?? '') : ''}
                       </td>
 
-                      {/* 2023 */}
+                      {/* yMgBe */}
                       <td className="border border-black py-1.5 px-1 text-center">
-                        {!isNT && isReported ? (ps?.age_stats?.['2023']?.present ?? ps?.age_stats?.['2023']?.total ?? '') : ''}
+                        {!isNT && isReported ? (ps?.age_stats?.[yMgBe]?.present ?? ps?.age_stats?.[yMgBe]?.total ?? '') : ''}
                       </td>
 
-                      {/* 2022 */}
+                      {/* yMgNho */}
                       <td className="border border-black py-1.5 px-1 text-center">
-                        {!isNT && isReported ? (ps?.age_stats?.['2022']?.present ?? ps?.age_stats?.['2022']?.total ?? '') : ''}
+                        {!isNT && isReported ? (ps?.age_stats?.[yMgNho]?.present ?? ps?.age_stats?.[yMgNho]?.total ?? '') : ''}
                       </td>
 
-                      {/* 2021 */}
+                      {/* yMgLon */}
                       <td className="border border-black py-1.5 px-1 text-center">
-                        {!isNT && isReported ? (ps?.age_stats?.['2021']?.present ?? ps?.age_stats?.['2021']?.total ?? '') : ''}
+                        {!isNT && isReported ? (ps?.age_stats?.[yMgLon]?.present ?? ps?.age_stats?.[yMgLon]?.total ?? '') : ''}
                       </td>
 
                       {/* TỔNG SỐ TRẺ ĐI HỌC (CỘT VÀNG CHUẨN 100% THEO ẢNH GỐC) */}
@@ -1696,19 +1709,19 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                     {preschoolTotals.boardingMauGiao || 0}
                   </td>
                   <td className="border border-black py-2 px-1 text-center font-black">
-                    {preschoolTotals.byYear?.['2025']?.present || preschoolTotals.byYear?.['2025']?.total || 0}
+                    {preschoolTotals.byYear?.[yNt1]?.present || preschoolTotals.byYear?.[yNt1]?.total || 0}
                   </td>
                   <td className="border border-black py-2 px-1 text-center font-black">
-                    {preschoolTotals.byYear?.['2024']?.present || preschoolTotals.byYear?.['2024']?.total || 0}
+                    {preschoolTotals.byYear?.[yNt2]?.present || preschoolTotals.byYear?.[yNt2]?.total || 0}
                   </td>
                   <td className="border border-black py-2 px-1 text-center font-black">
-                    {preschoolTotals.byYear?.['2023']?.present || preschoolTotals.byYear?.['2023']?.total || 0}
+                    {preschoolTotals.byYear?.[yMgBe]?.present || preschoolTotals.byYear?.[yMgBe]?.total || 0}
                   </td>
                   <td className="border border-black py-2 px-1 text-center font-black">
-                    {preschoolTotals.byYear?.['2022']?.present || preschoolTotals.byYear?.['2022']?.total || 0}
+                    {preschoolTotals.byYear?.[yMgNho]?.present || preschoolTotals.byYear?.[yMgNho]?.total || 0}
                   </td>
                   <td className="border border-black py-2 px-1 text-center font-black">
-                    {preschoolTotals.byYear?.['2021']?.present || preschoolTotals.byYear?.['2021']?.total || 0}
+                    {preschoolTotals.byYear?.[yMgLon]?.present || preschoolTotals.byYear?.[yMgLon]?.total || 0}
                   </td>
                   <td className="border border-black py-2 px-1 text-center font-black bg-[#FFFF00] text-black text-sm">
                     {preschoolTotals.presentStudents}
@@ -1768,17 +1781,17 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                   <th className="border border-black px-1 py-1.5 w-11 bg-amber-50/40 text-emerald-800">Có mặt</th>
                   <th className="border border-black px-1 py-1.5 w-10 bg-amber-50/40 text-red-700">Vắng</th>
                   <th className="border border-black px-1 py-1.5 w-12 bg-amber-100/80 text-amber-950 font-black">Ăn NT</th>
-                  <th className="border border-black px-1 py-1.5 min-w-[70px] bg-amber-50/20 font-bold">Sinh 2025 (1-2T)</th>
-                  <th className="border border-black px-1 py-1.5 min-w-[70px] bg-amber-50/20 font-bold">Sinh 2024 (2-3T)</th>
+                  <th className="border border-black px-1 py-1.5 min-w-[70px] bg-amber-50/20 font-bold">Sinh {yNt1} (1-2T)</th>
+                  <th className="border border-black px-1 py-1.5 min-w-[70px] bg-amber-50/20 font-bold">Sinh {yNt2} (2-3T)</th>
 
                   {/* Khối Mẫu giáo */}
                   <th className="border border-black px-1 py-1.5 w-11 bg-teal-50/40">Sĩ số</th>
                   <th className="border border-black px-1 py-1.5 w-11 bg-teal-50/40 text-emerald-800">Có mặt</th>
                   <th className="border border-black px-1 py-1.5 w-10 bg-teal-50/40 text-red-700">Vắng</th>
                   <th className="border border-black px-1 py-1.5 w-12 bg-teal-100/80 text-teal-950 font-black">Ăn MG</th>
-                  <th className="border border-black px-1 py-1.5 min-w-[70px] bg-teal-50/20 font-bold">Sinh 2023 (3-4T)</th>
-                  <th className="border border-black px-1 py-1.5 min-w-[70px] bg-teal-50/20 font-bold">Sinh 2022 (4-5T)</th>
-                  <th className="border border-black px-1 py-1.5 min-w-[70px] bg-teal-50/20 font-bold">Sinh 2021 (5-6T)</th>
+                  <th className="border border-black px-1 py-1.5 min-w-[70px] bg-teal-50/20 font-bold">Sinh {yMgBe} (3-4T)</th>
+                  <th className="border border-black px-1 py-1.5 min-w-[70px] bg-teal-50/20 font-bold">Sinh {yMgNho} (4-5T)</th>
+                  <th className="border border-black px-1 py-1.5 min-w-[70px] bg-teal-50/20 font-bold">Sinh {yMgLon} (5-6T)</th>
 
                   {/* Tổng hợp & Bán trú */}
                   <th className="border border-black px-1 py-1.5 w-11">Tổng TS</th>
@@ -1853,17 +1866,17 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                       <td className="border border-black py-1.5 px-1 font-bold text-emerald-800 bg-amber-50/20">{isReported ? presentNT : '-'}</td>
                       <td className={`border border-black py-1.5 px-1 bg-amber-50/20 ${absentNT > 0 ? 'text-red-700 font-bold' : ''}`}>{isReported ? absentNT : '-'}</td>
                       <td className="border border-black py-1.5 px-1 font-black text-amber-900 bg-amber-100/50">{isReported ? boardingNT : '-'}</td>
-                      <td className="border border-black py-1.5 px-1 bg-amber-50/10">{renderYearStat('2025')}</td>
-                      <td className="border border-black py-1.5 px-1 bg-amber-50/10">{renderYearStat('2024')}</td>
+                      <td className="border border-black py-1.5 px-1 bg-amber-50/10">{renderYearStat(yNt1)}</td>
+                      <td className="border border-black py-1.5 px-1 bg-amber-50/10">{renderYearStat(yNt2)}</td>
 
                       {/* Khối Mẫu giáo */}
                       <td className="border border-black py-1.5 px-1 bg-teal-50/20">{isReported ? totalMG : '-'}</td>
                       <td className="border border-black py-1.5 px-1 font-bold text-emerald-800 bg-teal-50/20">{isReported ? presentMG : '-'}</td>
                       <td className={`border border-black py-1.5 px-1 bg-teal-50/20 ${absentMG > 0 ? 'text-red-700 font-bold' : ''}`}>{isReported ? absentMG : '-'}</td>
                       <td className="border border-black py-1.5 px-1 font-black text-teal-900 bg-teal-100/50">{isReported ? boardingMG : '-'}</td>
-                      <td className="border border-black py-1.5 px-1 bg-teal-50/10">{renderYearStat('2023')}</td>
-                      <td className="border border-black py-1.5 px-1 bg-teal-50/10">{renderYearStat('2022')}</td>
-                      <td className="border border-black py-1.5 px-1 bg-teal-50/10">{renderYearStat('2021')}</td>
+                      <td className="border border-black py-1.5 px-1 bg-teal-50/10">{renderYearStat(yMgBe)}</td>
+                      <td className="border border-black py-1.5 px-1 bg-teal-50/10">{renderYearStat(yMgNho)}</td>
+                      <td className="border border-black py-1.5 px-1 bg-teal-50/10">{renderYearStat(yMgLon)}</td>
 
                       {/* Tổng hợp & Bán trú */}
                       <td className="border border-black py-1.5 px-1 font-bold">{isReported ? totalAll : '-'}</td>
@@ -1912,12 +1925,12 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                     <td className={`border border-black py-2 px-1 text-center font-bold bg-amber-50/50 ${(preschoolTotals.absentNhaTre || 0) > 0 ? 'text-red-700' : ''}`}>{preschoolTotals.absentNhaTre || 0}</td>
                     <td className="border border-black py-2 px-1 text-center font-black text-amber-900 bg-amber-200/70">{preschoolTotals.boardingNhaTre || 0}</td>
                     <td className="border border-black py-2 px-1 text-center text-[10px] bg-amber-50/30">
-                      <b>{preschoolTotals.byYear?.['2025']?.present || 0}</b>/{preschoolTotals.byYear?.['2025']?.total || 0}
-                      <span className="text-amber-900 font-bold ml-1">({preschoolTotals.byYear?.['2025']?.boarding || 0} ăn)</span>
+                      <b>{preschoolTotals.byYear?.[yNt1]?.present || 0}</b>/{preschoolTotals.byYear?.[yNt1]?.total || 0}
+                      <span className="text-amber-900 font-bold ml-1">({preschoolTotals.byYear?.[yNt1]?.boarding || 0} ăn)</span>
                     </td>
                     <td className="border border-black py-2 px-1 text-center text-[10px] bg-amber-50/30">
-                      <b>{preschoolTotals.byYear?.['2024']?.present || 0}</b>/{preschoolTotals.byYear?.['2024']?.total || 0}
-                      <span className="text-amber-900 font-bold ml-1">({preschoolTotals.byYear?.['2024']?.boarding || 0} ăn)</span>
+                      <b>{preschoolTotals.byYear?.[yNt2]?.present || 0}</b>/{preschoolTotals.byYear?.[yNt2]?.total || 0}
+                      <span className="text-amber-900 font-bold ml-1">({preschoolTotals.byYear?.[yNt2]?.boarding || 0} ăn)</span>
                     </td>
 
                     {/* Khối Mẫu giáo */}
@@ -1926,16 +1939,16 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
                     <td className={`border border-black py-2 px-1 text-center font-bold bg-teal-50/50 ${(preschoolTotals.absentMauGiao || 0) > 0 ? 'text-red-700' : ''}`}>{preschoolTotals.absentMauGiao || 0}</td>
                     <td className="border border-black py-2 px-1 text-center font-black text-teal-900 bg-teal-200/70">{preschoolTotals.boardingMauGiao || 0}</td>
                     <td className="border border-black py-2 px-1 text-center text-[10px] bg-teal-50/30">
-                      <b>{preschoolTotals.byYear?.['2023']?.present || 0}</b>/{preschoolTotals.byYear?.['2023']?.total || 0}
-                      <span className="text-teal-900 font-bold ml-1">({preschoolTotals.byYear?.['2023']?.boarding || 0} ăn)</span>
+                      <b>{preschoolTotals.byYear?.[yMgBe]?.present || 0}</b>/{preschoolTotals.byYear?.[yMgBe]?.total || 0}
+                      <span className="text-teal-900 font-bold ml-1">({preschoolTotals.byYear?.[yMgBe]?.boarding || 0} ăn)</span>
                     </td>
                     <td className="border border-black py-2 px-1 text-center text-[10px] bg-teal-50/30">
-                      <b>{preschoolTotals.byYear?.['2022']?.present || 0}</b>/{preschoolTotals.byYear?.['2022']?.total || 0}
-                      <span className="text-teal-900 font-bold ml-1">({preschoolTotals.byYear?.['2022']?.boarding || 0} ăn)</span>
+                      <b>{preschoolTotals.byYear?.[yMgNho]?.present || 0}</b>/{preschoolTotals.byYear?.[yMgNho]?.total || 0}
+                      <span className="text-teal-900 font-bold ml-1">({preschoolTotals.byYear?.[yMgNho]?.boarding || 0} ăn)</span>
                     </td>
                     <td className="border border-black py-2 px-1 text-center text-[10px] bg-teal-50/30">
-                      <b>{preschoolTotals.byYear?.['2021']?.present || 0}</b>/{preschoolTotals.byYear?.['2021']?.total || 0}
-                      <span className="text-teal-900 font-bold ml-1">({preschoolTotals.byYear?.['2021']?.boarding || 0} ăn)</span>
+                      <b>{preschoolTotals.byYear?.[yMgLon]?.present || 0}</b>/{preschoolTotals.byYear?.[yMgLon]?.total || 0}
+                      <span className="text-teal-900 font-bold ml-1">({preschoolTotals.byYear?.[yMgLon]?.boarding || 0} ăn)</span>
                     </td>
 
                     {/* Tổng hợp toàn lớp */}

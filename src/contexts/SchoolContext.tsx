@@ -39,6 +39,8 @@ interface SchoolContextType {
   importStudents: (students: Array<Omit<Student, 'id' | 'created_at'>>) => Promise<void>;
   updatePreschoolGrades: (grades: PreschoolGradeConfig[]) => Promise<void>;
   resetPreschoolGrades: () => Promise<void>;
+  cleanDuplicateTeachers: () => Promise<{ removedCount: number; cleanedNames: string[] }>;
+  getDuplicateTeachersSummary: () => Promise<{ duplicateGroupsCount: number; duplicateAccountsCount: number; details: Array<{ name: string; count: number; ids: string[] }> }>;
 }
 
 const SchoolContext = createContext<SchoolContextType | undefined>(undefined);
@@ -389,6 +391,16 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setPreschoolGrades(defaults);
   };
 
+  const cleanDuplicateTeachers = async () => {
+    const res = await StorageService.deduplicateProfiles();
+    await refreshAll();
+    return res;
+  };
+
+  const getDuplicateTeachersSummary = async () => {
+    return await StorageService.getDuplicateProfilesSummary();
+  };
+
   return (
     <SchoolContext.Provider
       value={{
@@ -427,6 +439,8 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         importStudents,
         updatePreschoolGrades,
         resetPreschoolGrades,
+        cleanDuplicateTeachers,
+        getDuplicateTeachersSummary,
       }}
     >
       {children}

@@ -2,7 +2,15 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useSchool } from '../contexts/SchoolContext';
 import { StorageService } from '../services/storage';
-import { DailyReport, AbsentStudent, PreschoolDailyData, PRESCHOOL_BIRTH_YEARS, AgeGroupStat } from '../types';
+import {
+  DailyReport,
+  AbsentStudent,
+  PreschoolDailyData,
+  PRESCHOOL_BIRTH_YEARS,
+  AgeGroupStat,
+  getPreschoolBirthYearsForSchoolYear,
+  parseSchoolStartYear,
+} from '../types';
 import {
   getTeacherAllowedScope,
   canTeacherInputClass,
@@ -79,6 +87,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
     indicators,
     campuses,
     students,
+    activeYear,
     addStudent,
     updateStudent,
     deleteStudent,
@@ -176,10 +185,18 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
   // Values map: indicator_group_id -> { total, present, absent }
   const [formValues, setFormValues] = useState<Record<string, GroupInputState>>({});
 
+  const activeSchoolYearBirthYears = useMemo(() => {
+    return getPreschoolBirthYearsForSchoolYear(activeYear?.name);
+  }, [activeYear?.name]);
+
+  const startYear = useMemo(() => {
+    return parseSchoolStartYear(activeYear?.name);
+  }, [activeYear?.name]);
+
   const createDefaultAgeStats = (): Record<string, AgeGroupStat> => {
     const map: Record<string, AgeGroupStat> = {};
-    PRESCHOOL_BIRTH_YEARS.forEach((by) => {
-      map[by.year] = { total: 0, present: 0, absent: 0, boarding: 0 };
+    activeSchoolYearBirthYears.forEach((by) => {
+      map[String(by.year)] = { total: 0, present: 0, absent: 0, boarding: 0 };
     });
     return map;
   };
@@ -222,13 +239,37 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
     return indicators.filter((ig) => ig.enabled).sort((a, b) => a.sort_order - b.sort_order);
   }, [indicators]);
 
-  // Danh mục năm sinh và độ tuổi Mẫu giáo được đồng bộ từ cấu hình khối lớp thực tế
+  // Danh mục năm sinh và độ tuổi Nhà trẻ tịnh tiến theo Năm học
+  const nhaTreAgeGroupItems = useMemo(() => {
+    const ntGrades = preschoolGrades.filter((g) => g.category === 'NHA_TRE');
+    const baseItems = [
+      { year: String(startYear - 1), ageRange: '1 - 2 tuổi', desc: `Trẻ sinh năm ${startYear - 1}` },
+      { year: String(startYear - 2), ageRange: '2 - 3 tuổi (24-36 tháng)', desc: `Trẻ sinh năm ${startYear - 2}` },
+      { year: String(startYear), ageRange: '< 1 tuổi', desc: `Trẻ sinh năm ${startYear} (nếu có)` },
+    ];
+    return baseItems.map((item) => {
+      const yNum = Number(item.year);
+      const matched = ntGrades.find((g) => g.birth_years?.includes(yNum));
+      let ageLabel = item.ageRange;
+      if (matched) {
+        ageLabel = `${item.ageRange} (${matched.name})`;
+      }
+      return {
+        year: item.year,
+        ageLabel,
+        note: item.desc,
+        desc: item.desc,
+      };
+    });
+  }, [startYear, preschoolGrades]);
+
+  // Danh mục năm sinh và độ tuổi Mẫu giáo được đồng bộ từ cấu hình khối lớp thực tế & tịnh tiến theo Năm học
   const mauGiaoAgeGroupItems = useMemo(() => {
     const mgGrades = preschoolGrades.filter((g) => g.category === 'MAU_GIAO');
     const baseItems = [
-      { year: '2023', ageRange: '3 - 4 tuổi', desc: 'Trẻ sinh năm 2023' },
-      { year: '2022', ageRange: '4 - 5 tuổi', desc: 'Trẻ sinh năm 2022' },
-      { year: '2021', ageRange: '5 - 6 tuổi', desc: 'Trẻ sinh năm 2021' },
+      { year: String(startYear - 3), ageRange: '3 - 4 tuổi', desc: `Trẻ sinh năm ${startYear - 3}` },
+      { year: String(startYear - 4), ageRange: '4 - 5 tuổi', desc: `Trẻ sinh năm ${startYear - 4}` },
+      { year: String(startYear - 5), ageRange: '5 - 6 tuổi', desc: `Trẻ sinh năm ${startYear - 5}` },
     ];
     return baseItems.map((item) => {
       const yNum = Number(item.year);
@@ -236,7 +277,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
       let ageLabel = item.ageRange;
       if (matched) {
         ageLabel = `${item.ageRange} (${matched.name})`;
-      } else if (item.year === '2021') {
+      } else if (item.year === String(startYear - 5)) {
         ageLabel = '5 - 6 tuổi (MG Lớn)';
       }
       return {
@@ -246,7 +287,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
         desc: item.desc,
       };
     });
-  }, [preschoolGrades]);
+  }, [startYear, preschoolGrades]);
 
   const isAssignedTeacher = currentUser?.assigned_class_id === selectedClassId;
   const isLocked = Boolean(selectedClass?.is_locked || existingReport?.status === 'LOCKED');
@@ -465,11 +506,11 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
           const isChoi = cName.includes('nhỡ') || cName.includes('chồi') || selectedClass?.grade === 3;
           const isLa = cName.includes('lớn') || cName.includes('lá') || selectedClass?.grade === 4;
 
-          let targetYear = '2023';
-          if (isNT) targetYear = '2024';
-          else if (isMam) targetYear = '2023';
-          else if (isChoi) targetYear = '2022';
-          else if (isLa) targetYear = '2021';
+          let targetYear = String(startYear - 3);
+          if (isNT) targetYear = String(startYear - 2);
+          else if (isMam) targetYear = String(startYear - 3);
+          else if (isChoi) targetYear = String(startYear - 4);
+          else if (isLa) targetYear = String(startYear - 5);
 
           const defStats = createDefaultAgeStats();
           if (totalKids > 0 && defStats[targetYear]) {
@@ -481,7 +522,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
             };
           }
 
-          const isTargetNT = isNT || targetYear === '2024' || targetYear === '2025' || targetYear === '2026';
+          const isTargetNT = isNT || Number(targetYear) >= startYear - 2;
 
           setPreschoolData({
             female_count: defFemale,
@@ -777,8 +818,10 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
         boarding: newBoarding,
       };
 
-      // Sum Nhà trẻ (2026, 2025, 2024)
-      const ntYears = ['2026', '2025', '2024'];
+      // Tách danh sách năm sinh theo khối Nhà trẻ & Mẫu giáo
+      const ntYears = nhaTreAgeGroupItems.map((item) => item.year);
+      const mgYears = mauGiaoAgeGroupItems.map((item) => item.year);
+
       let totNT = 0;
       let presNT = 0;
       let absNT = 0;
@@ -792,8 +835,6 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
         }
       });
 
-      // Sum Mẫu giáo (2023, 2022, 2021)
-      const mgYears = ['2023', '2022', '2021'];
       let totMG = 0;
       let presMG = 0;
       let absMG = 0;
@@ -903,7 +944,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
       boarding: present,
     };
 
-    const isNT = year === '2026' || year === '2025' || year === '2024';
+    const isNT = Number(year) >= startYear - 2;
 
     setPreschoolData((prev) => ({
       ...prev,
@@ -1843,11 +1884,16 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
               </div>
               <div className="flex flex-wrap items-center gap-1.5">
                 {[
-                  { year: '2025', label: 'Sinh 2025 (1-2T Nhà trẻ)', isNT: true },
-                  { year: '2024', label: 'Sinh 2024 (2-3T Nhà trẻ)', isNT: true },
-                  { year: '2023', label: 'Sinh 2023 (Trẻ 3-4T)', isNT: false },
-                  { year: '2022', label: 'Sinh 2022 (Trẻ 4-5T)', isNT: false },
-                  { year: '2021', label: 'Sinh 2021 (5-6T MG Lớn)', isNT: false },
+                  ...nhaTreAgeGroupItems.filter(item => item.year !== String(startYear)).map(item => ({
+                    year: item.year,
+                    label: `Sinh ${item.year} (${item.ageLabel})`,
+                    isNT: true,
+                  })),
+                  ...mauGiaoAgeGroupItems.map(item => ({
+                    year: item.year,
+                    label: `Sinh ${item.year} (${item.ageLabel})`,
+                    isNT: false,
+                  })),
                 ].map((cohort) => (
                   <button
                     key={cohort.year}
@@ -1868,7 +1914,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
 
           {/* BẢNG NHẬP SĨ SỐ VÀ ĐI HỌC THEO TỪNG ĐỘ TUỔI (NHÀ TRẺ & MẪU GIÁO) */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
-            {/* CỘT A: KHỐI NHÀ TRẺ (Dưới 3 tuổi - sinh 2025, 2024, 2026) */}
+            {/* CỘT A: KHỐI NHÀ TRẺ (Dưới 3 tuổi) */}
             <div className="bg-amber-50/40 rounded-xl border border-amber-200 p-3 space-y-3">
               <div className="flex items-center justify-between border-b border-amber-200/80 pb-2">
                 <div className="flex items-center gap-2">
@@ -1886,11 +1932,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
 
               {/* Các năm sinh Nhà trẻ */}
               <div className="space-y-2">
-                {[
-                  { year: '2025', ageLabel: '1 - 2 tuổi', note: 'Trẻ sinh năm 2025' },
-                  { year: '2024', ageLabel: '2 - 3 tuổi (24-36 tháng)', note: 'Trẻ sinh năm 2024' },
-                  { year: '2026', ageLabel: '< 1 tuổi', note: 'Trẻ sinh năm 2026 (nếu có)' },
-                ].map((item) => {
+                {nhaTreAgeGroupItems.map((item) => {
                   const stat = preschoolData.age_stats?.[item.year] || { total: 0, present: 0, absent: 0, boarding: 0 };
                   return (
                     <div key={item.year} className="bg-white p-2.5 rounded-lg border border-amber-200/80 shadow-2xs space-y-1.5">
@@ -1957,7 +1999,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
               </div>
             </div>
 
-            {/* CỘT B: KHỐI MẪU GIÁO (3 - 6 tuổi - sinh 2023, 2022, 2021) */}
+            {/* CỘT B: KHỐI MẪU GIÁO (3 - 6 tuổi) */}
             <div className="bg-indigo-50/40 rounded-xl border border-indigo-200 p-3 space-y-3">
               <div className="flex items-center justify-between border-b border-indigo-200/80 pb-2">
                 <div className="flex items-center gap-2">
@@ -2366,7 +2408,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
 
           {/* 2 CỘT BÁO ĂN THEO ĐỘ TUỔI: BÁO ĂN NHÀ TRẺ & BÁO ĂN MẪU GIÁO */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
-            {/* CỘT A: BÁO ĂN NHÀ TRẺ (Dưới 3 tuổi - sinh 2025, 2024, 2026) */}
+            {/* CỘT A: BÁO ĂN NHÀ TRẺ (Dưới 3 tuổi - các năm sinh Nhà trẻ) */}
             <div className="bg-amber-50/50 rounded-xl border border-amber-200 p-3 space-y-3">
               <div className="flex items-center justify-between border-b border-amber-200/80 pb-2 flex-wrap gap-1">
                 <div className="flex items-center gap-1.5">
@@ -2406,11 +2448,7 @@ export const AttendanceInputPage: React.FC<AttendanceInputPageProps> = ({
 
               {/* Chi tiết ăn theo từng năm sinh Nhà trẻ */}
               <div className="space-y-2">
-                {[
-                  { year: '2025', ageLabel: '1 - 2 tuổi', desc: 'Trẻ sinh năm 2025' },
-                  { year: '2024', ageLabel: '2 - 3 tuổi (24-36T)', desc: 'Trẻ sinh năm 2024' },
-                  { year: '2026', ageLabel: '< 1 tuổi', desc: 'Trẻ sinh năm 2026' },
-                ].map((item) => {
+                {nhaTreAgeGroupItems.map((item) => {
                   const stat = preschoolData.age_stats?.[item.year] || { total: 0, present: 0, absent: 0, boarding: 0 };
                   return (
                     <div key={item.year} className="bg-white p-2 rounded-lg border border-amber-200/80 shadow-2xs flex items-center justify-between gap-2">

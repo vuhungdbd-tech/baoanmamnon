@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { Profile, UserRole } from '../types';
-import { StorageService } from '../services/storage';
+import { StorageService, subscribeRealtime } from '../services/storage';
 
 interface AuthContextType {
   currentUser: Profile | null;
@@ -132,6 +132,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     reloadUsers().finally(() => setLoading(false));
+
+    const unsubscribe = subscribeRealtime((event) => {
+      if (
+        event.table === 'profiles' ||
+        event.table === 'sso_profiles_v1' ||
+        event.table === 'all'
+      ) {
+        reloadUsers();
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   const login = async (email: string): Promise<boolean> => {
