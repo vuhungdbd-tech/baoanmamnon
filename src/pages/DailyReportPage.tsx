@@ -776,7 +776,773 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
         return;
       }
 
-      const ws = wb.addWorksheet('ThongKeMamNon', {
+      // -------------------------------------------------------------
+      // 2. NẾU ĐANG Ở CHẾ ĐỘ "BIỂU THEO ĐỘ TUỔI & SUẤT ĂN (25 CỘT MỞ RỘNG)"
+      // -------------------------------------------------------------
+      if (viewMode === 'PRESCHOOL_AGE_BOARDING') {
+        const ws = wb.addWorksheet('DoTuoi_SuatAn_25Cot', {
+          pageSetup: {
+            orientation: 'landscape',
+            paperSize: 9, // A4
+            fitToPage: true,
+            fitToWidth: 1,
+            fitToHeight: 0,
+            margins: {
+              left: 0.3,
+              right: 0.3,
+              top: 0.4,
+              bottom: 0.4,
+              header: 0.2,
+              footer: 0.2,
+            },
+          },
+        });
+
+        // 24 cột dữ liệu (A đến X) tương ứng toàn bộ các cột in ấn của bảng 25 cột
+        ws.columns = [
+          { key: 'stt', width: 6 },            // A: STT
+          { key: 'class', width: 22 },          // B: Nhóm / Lớp
+          { key: 'teacher', width: 22 },        // C: Giáo viên phụ trách
+          // Khối Nhà trẻ (D..J)
+          { key: 'ntTotal', width: 8 },         // D: Sĩ số
+          { key: 'ntPresent', width: 8 },       // E: Có mặt
+          { key: 'ntAbsent', width: 8 },        // F: Vắng
+          { key: 'ntBoarding', width: 9 },      // G: Ăn NT
+          { key: 'ntYear0', width: 14 },        // H: Sinh yNt0 (< 1T)
+          { key: 'ntYear1', width: 14 },        // I: Sinh yNt1 (1-2T)
+          { key: 'ntYear2', width: 14 },        // J: Sinh yNt2 (2-3T)
+          // Khối Mẫu giáo (K..Q)
+          { key: 'mgTotal', width: 8 },         // K: Sĩ số
+          { key: 'mgPresent', width: 8 },       // L: Có mặt
+          { key: 'mgAbsent', width: 8 },        // M: Vắng
+          { key: 'mgBoarding', width: 9 },      // N: Ăn MG
+          { key: 'mgYearBe', width: 14 },       // O: Sinh yMgBe (3-4T)
+          { key: 'mgYearNho', width: 14 },      // P: Sinh yMgNho (4-5T)
+          { key: 'mgYearLon', width: 14 },      // Q: Sinh yMgLon (5-6T)
+          // Tổng hợp & Bán trú toàn lớp (R..V)
+          { key: 'allTotal', width: 9 },        // R: Tổng TS
+          { key: 'allPresent', width: 9 },      // S: Đi học
+          { key: 'allAbsent', width: 8 },       // T: Vắng
+          { key: 'allBoarding', width: 10 },    // U: Tổng ăn
+          { key: 'allCanceled', width: 8 },     // V: Cắt ăn
+          // Khác
+          { key: 'rate', width: 14 },           // W: TỈ LỆ CHUYÊN CẦN (%)
+          { key: 'notes', width: 34 },          // X: Tên trẻ nghỉ & Ghi chú
+        ];
+
+        let rIdx = 1;
+
+        // Row 1: Left: UBND XÃ. Right: CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM
+        ws.mergeCells(`A${rIdx}:G${rIdx}`);
+        const subDeptCell = ws.getCell(`A${rIdx}`);
+        subDeptCell.value = (settings?.sub_department_name || 'UBND XÃ XA DUNG').toUpperCase();
+        subDeptCell.font = { name: 'Times New Roman', size: 10, bold: true };
+        subDeptCell.alignment = { horizontal: 'left', vertical: 'middle' };
+
+        ws.mergeCells(`R${rIdx}:X${rIdx}`);
+        const nationCell1 = ws.getCell(`R${rIdx}`);
+        nationCell1.value = 'CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM';
+        nationCell1.font = { name: 'Times New Roman', size: 10, bold: true };
+        nationCell1.alignment = { horizontal: 'center', vertical: 'middle' };
+
+        ws.getRow(rIdx).height = 18;
+        rIdx++;
+
+        // Row 2: Left: Tên Trường. Right: Độc lập - Tự do - Hạnh phúc
+        ws.mergeCells(`A${rIdx}:G${rIdx}`);
+        const schoolNameCell = ws.getCell(`A${rIdx}`);
+        schoolNameCell.value = formattedSchoolName;
+        schoolNameCell.font = { name: 'Times New Roman', size: 10, bold: true };
+        schoolNameCell.alignment = { horizontal: 'left', vertical: 'middle' };
+
+        ws.mergeCells(`R${rIdx}:X${rIdx}`);
+        const nationCell2 = ws.getCell(`R${rIdx}`);
+        nationCell2.value = 'Độc lập - Tự do - Hạnh phúc';
+        nationCell2.font = { name: 'Times New Roman', size: 10, bold: true, underline: 'single' };
+        nationCell2.alignment = { horizontal: 'center', vertical: 'middle' };
+
+        ws.getRow(rIdx).height = 18;
+        rIdx++;
+
+        // Row 3: Phân hiệu (nếu có)
+        if (selectedCampusId !== 'all') {
+          ws.mergeCells(`A${rIdx}:G${rIdx}`);
+          const campusCell = ws.getCell(`A${rIdx}`);
+          const selectedCampus = campuses.find((c) => c.id === selectedCampusId);
+          campusCell.value = `PHÂN HIỆU: ${(selectedCampus ? selectedCampus.name : '...........').toUpperCase()}`;
+          campusCell.font = { name: 'Times New Roman', size: 10, bold: true };
+          campusCell.alignment = { horizontal: 'left', vertical: 'middle' };
+          ws.getRow(rIdx).height = 18;
+          rIdx++;
+        }
+
+        // Spacer
+        ws.getRow(rIdx).height = 8;
+        rIdx++;
+
+        // Row Title
+        const titleText = exportBlankTemplate || blankDateInTitle
+          ? `${baseTitle} NGÀY .......THÁNG ...... NĂM ${dateParts.year}`
+          : `${baseTitle} NGÀY ${dateParts.day} THÁNG ${dateParts.month} NĂM ${dateParts.year}`;
+
+        ws.mergeCells(`A${rIdx}:X${rIdx}`);
+        const titleCell = ws.getCell(`A${rIdx}`);
+        titleCell.value = titleText;
+        titleCell.font = { name: 'Times New Roman', size: 13, bold: true };
+        titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        ws.getRow(rIdx).height = 28;
+        rIdx++;
+
+        // Subtitle
+        ws.mergeCells(`A${rIdx}:X${rIdx}`);
+        const subTitleCell = ws.getCell(`A${rIdx}`);
+        subTitleCell.value = `(Biểu thống kê chi tiết theo độ tuổi & khẩu phần ăn: Khối Nhà trẻ, Khối Mẫu giáo, Trẻ sinh ${yNt0} - ${yMgLon})`;
+        subTitleCell.font = { name: 'Times New Roman', size: 10, italic: true };
+        subTitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        ws.getRow(rIdx).height = 16;
+        rIdx++;
+
+        ws.getRow(rIdx).height = 8;
+        rIdx++;
+
+        // Header Rows (2 rows)
+        const headerStartRow = rIdx;
+
+        // Row 1 Merges
+        ws.mergeCells(`A${headerStartRow}:A${headerStartRow + 1}`);
+        ws.getCell(`A${headerStartRow}`).value = 'STT';
+
+        ws.mergeCells(`B${headerStartRow}:B${headerStartRow + 1}`);
+        ws.getCell(`B${headerStartRow}`).value = 'Nhóm / Lớp';
+
+        ws.mergeCells(`C${headerStartRow}:C${headerStartRow + 1}`);
+        ws.getCell(`C${headerStartRow}`).value = 'Giáo viên phụ trách';
+
+        ws.mergeCells(`D${headerStartRow}:J${headerStartRow}`);
+        const hNt = ws.getCell(`D${headerStartRow}`);
+        hNt.value = 'KHỐI NHÀ TRẺ (DƯỚI 3 TUỔI)';
+
+        ws.mergeCells(`K${headerStartRow}:Q${headerStartRow}`);
+        const hMg = ws.getCell(`K${headerStartRow}`);
+        hMg.value = 'KHỐI MẪU GIÁO (3 - 6 TUỔI)';
+
+        ws.mergeCells(`R${headerStartRow}:V${headerStartRow}`);
+        const hAll = ws.getCell(`R${headerStartRow}`);
+        hAll.value = 'TỔNG HỢP & BÁN TRÚ TOÀN LỚP';
+
+        ws.mergeCells(`W${headerStartRow}:W${headerStartRow + 1}`);
+        ws.getCell(`W${headerStartRow}`).value = 'TỈ LỆ\nCHUYÊN CẦN (%)';
+
+        ws.mergeCells(`X${headerStartRow}:X${headerStartRow + 1}`);
+        ws.getCell(`X${headerStartRow}`).value = 'Tên trẻ nghỉ & Ghi chú';
+
+        // Row 2 Sub-headers
+        ws.getCell(`D${headerStartRow + 1}`).value = 'Sĩ số';
+        ws.getCell(`E${headerStartRow + 1}`).value = 'Có mặt';
+        ws.getCell(`F${headerStartRow + 1}`).value = 'Vắng';
+        ws.getCell(`G${headerStartRow + 1}`).value = 'Ăn NT';
+        ws.getCell(`H${headerStartRow + 1}`).value = `Sinh ${yNt0} (< 1T)`;
+        ws.getCell(`I${headerStartRow + 1}`).value = `Sinh ${yNt1} (1-2T)`;
+        ws.getCell(`J${headerStartRow + 1}`).value = `Sinh ${yNt2} (2-3T)`;
+
+        ws.getCell(`K${headerStartRow + 1}`).value = 'Sĩ số';
+        ws.getCell(`L${headerStartRow + 1}`).value = 'Có mặt';
+        ws.getCell(`M${headerStartRow + 1}`).value = 'Vắng';
+        ws.getCell(`N${headerStartRow + 1}`).value = 'Ăn MG';
+        ws.getCell(`O${headerStartRow + 1}`).value = `Sinh ${yMgBe} (3-4T)`;
+        ws.getCell(`P${headerStartRow + 1}`).value = `Sinh ${yMgNho} (4-5T)`;
+        ws.getCell(`Q${headerStartRow + 1}`).value = `Sinh ${yMgLon} (5-6T)`;
+
+        ws.getCell(`R${headerStartRow + 1}`).value = 'Tổng TS';
+        ws.getCell(`S${headerStartRow + 1}`).value = 'Đi học';
+        ws.getCell(`T${headerStartRow + 1}`).value = 'Vắng';
+        ws.getCell(`U${headerStartRow + 1}`).value = 'Tổng ăn';
+        ws.getCell(`V${headerStartRow + 1}`).value = 'Cắt ăn';
+
+        ws.getRow(headerStartRow).height = 24;
+        ws.getRow(headerStartRow + 1).height = 26;
+
+        // Apply styles to header rows
+        for (let r = headerStartRow; r <= headerStartRow + 1; r++) {
+          const row = ws.getRow(r);
+          row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+            cell.font = { name: 'Times New Roman', size: 10, bold: true };
+            cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+            cell.border = thinBorder;
+
+            // Header colors
+            if (colNumber >= 4 && colNumber <= 10) {
+              // Khối Nhà trẻ
+              if (colNumber === 7) {
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF08A' } }; // Vàng tươi cho Ăn NT
+              } else {
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } }; // Hổ phách nhạt
+              }
+            } else if (colNumber >= 11 && colNumber <= 17) {
+              // Khối Mẫu giáo
+              if (colNumber === 14) {
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFA7F3D0' } }; // Xanh ngọc nổi bật Ăn MG
+              } else {
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCCFBF1' } }; // Teal nhạt
+              }
+            } else if (colNumber >= 18 && colNumber <= 22) {
+              // Bán trú toàn lớp
+              if (colNumber === 21) {
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
+              } else {
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
+              }
+            } else {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+            }
+          });
+        }
+
+        // Data Rows
+        let currentRow = headerStartRow + 2;
+
+        const rowsToExport = exportBlankTemplate
+          ? classes.map((c, idx) => ({
+              classItem: c,
+              teacher: null,
+              report: null,
+              status: 'NOT_REPORTED' as const,
+              values: {},
+              stt: idx + 1,
+            }))
+          : (reportData?.rows || []).map((r, idx) => ({
+              ...r,
+              stt: idx + 1,
+            }));
+
+        rowsToExport.forEach((row: any) => {
+          const isReported = !exportBlankTemplate && row.status !== 'NOT_REPORTED';
+          const ps = row.preschool || row.report?.preschool_data;
+          const allVal = allIndicator ? row.values?.[allIndicator.id] : null;
+
+          const totalAll = ps?.female_count !== undefined && (allVal?.total ?? 0) === 0
+            ? ((ps.female_count || 0) + (ps.ethnic_count || 0))
+            : (allVal?.total ?? (row.classItem?.student_count || 0));
+
+          const absentAll = allVal?.absent ?? ((ps?.absent_excused || 0) + (ps?.absent_unexcused || 0));
+          const presentAll = allVal?.present ?? Math.max(0, totalAll - absentAll);
+          const isNT = isNhaTreClass(row.classItem?.class_name, row.classItem?.grade);
+
+          const totalNT = ps?.total_nha_tre ?? (isNT ? totalAll : 0);
+          const presentNT = ps?.present_nha_tre ?? (isNT ? presentAll : 0);
+          const absentNT = ps?.absent_nha_tre ?? Math.max(0, totalNT - presentNT);
+          let boardingNT = ps?.boarding_nha_tre;
+          if (isReported && isNT && (boardingNT === undefined || boardingNT === null || (Number(boardingNT) === 0 && presentAll > 0))) {
+            boardingNT = presentAll;
+          } else if (!boardingNT) {
+            boardingNT = 0;
+          }
+
+          const totalMG = ps?.total_mau_giao ?? (!isNT ? totalAll : 0);
+          const presentMG = ps?.present_mau_giao ?? (!isNT ? presentAll : 0);
+          const absentMG = ps?.absent_mau_giao ?? Math.max(0, totalMG - presentMG);
+          let boardingMG = ps?.boarding_mau_giao;
+          if (isReported && !isNT && (boardingMG === undefined || boardingMG === null || (Number(boardingMG) === 0 && presentAll > 0))) {
+            boardingMG = presentAll;
+          } else if (!boardingMG) {
+            boardingMG = 0;
+          }
+
+          let boardingTotal = ps?.boarding_count;
+          if (isReported && (boardingTotal === undefined || boardingTotal === null || (Number(boardingTotal) === 0 && presentAll > 0))) {
+            boardingTotal = presentAll;
+          } else if (!boardingTotal) {
+            boardingTotal = (Number(boardingNT) || 0) + (Number(boardingMG) || 0) || (boardingIndicator ? (row.values[boardingIndicator.id]?.total || 0) : 0);
+          }
+          const canceledTotal = ps?.canceled_count ?? absentAll;
+
+          const formatYearStat = (yr: string) => {
+            if (!isReported || exportBlankTemplate) return '';
+            const stat = ps?.age_stats?.[yr];
+            if (!stat || ((stat.total || 0) === 0 && (stat.present || 0) === 0 && (stat.boarding || 0) === 0)) {
+              return '-';
+            }
+            const p = stat.present ?? 0;
+            const b = (stat.boarding !== undefined && stat.boarding !== null && (stat.boarding > 0 || p === 0)) ? stat.boarding : p;
+            return `${p}/${stat.total ?? 0} (${b} ăn)`;
+          };
+
+          let notesText = '';
+          if (isReported) {
+            const absNames = row.report?.absent_students?.map((s: any) => `${s.full_name}${s.reason ? ` (${s.reason})` : ''}`).join(', ') || '';
+            const healthNote = ps?.health_note ? `[SK: ${ps.health_note}]` : '';
+            const extraNote = row.report?.notes ? `[GC: ${row.report.notes}]` : '';
+            notesText = [absNames, healthNote, extraNote].filter(Boolean).join(' | ') || '-';
+          } else if (!exportBlankTemplate) {
+            notesText = 'Chưa báo cáo';
+          }
+
+          const presentRate = totalAll > 0 ? (presentAll / totalAll) * 100 : 0;
+
+          const dataRow = ws.getRow(currentRow);
+          dataRow.getCell('A').value = row.stt;
+          dataRow.getCell('B').value = row.classItem?.class_name || '';
+          dataRow.getCell('C').value = row.teacher?.full_name || '-';
+
+          // Khối Nhà trẻ
+          dataRow.getCell('D').value = isReported ? totalNT : (exportBlankTemplate ? '' : '-');
+          dataRow.getCell('E').value = isReported ? presentNT : (exportBlankTemplate ? '' : '-');
+          dataRow.getCell('F').value = isReported ? absentNT : (exportBlankTemplate ? '' : '-');
+          dataRow.getCell('G').value = isReported ? boardingNT : (exportBlankTemplate ? '' : '-');
+          dataRow.getCell('H').value = formatYearStat(yNt0);
+          dataRow.getCell('I').value = formatYearStat(yNt1);
+          dataRow.getCell('J').value = formatYearStat(yNt2);
+
+          // Khối Mẫu giáo
+          dataRow.getCell('K').value = isReported ? totalMG : (exportBlankTemplate ? '' : '-');
+          dataRow.getCell('L').value = isReported ? presentMG : (exportBlankTemplate ? '' : '-');
+          dataRow.getCell('M').value = isReported ? absentMG : (exportBlankTemplate ? '' : '-');
+          dataRow.getCell('N').value = isReported ? boardingMG : (exportBlankTemplate ? '' : '-');
+          dataRow.getCell('O').value = formatYearStat(yMgBe);
+          dataRow.getCell('P').value = formatYearStat(yMgNho);
+          dataRow.getCell('Q').value = formatYearStat(yMgLon);
+
+          // Tổng hợp & Bán trú toàn lớp
+          dataRow.getCell('R').value = isReported ? totalAll : (exportBlankTemplate ? '' : totalAll || '-');
+          dataRow.getCell('S').value = isReported ? presentAll : (exportBlankTemplate ? '' : '-');
+          dataRow.getCell('T').value = isReported ? absentAll : (exportBlankTemplate ? '' : '-');
+          dataRow.getCell('U').value = isReported ? boardingTotal : (exportBlankTemplate ? '' : '-');
+          dataRow.getCell('V').value = isReported ? canceledTotal : (exportBlankTemplate ? '' : '-');
+
+          // Chuyên cần & Ghi chú
+          dataRow.getCell('W').value = isReported ? `${presentRate.toFixed(1).replace('.', ',')}%` : (exportBlankTemplate ? '' : '-');
+          dataRow.getCell('X').value = notesText;
+
+          dataRow.height = 22;
+
+          dataRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+            cell.font = { name: 'Times New Roman', size: 10 };
+            cell.border = thinBorder;
+
+            if (colNumber === 1 || colNumber === 23) {
+              cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            } else if (colNumber === 2 || colNumber === 3) {
+              cell.alignment = { horizontal: 'left', vertical: 'middle' };
+            } else if (colNumber === 24) {
+              cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+            } else {
+              cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            }
+
+            // Highlighting specific columns
+            if (colNumber === 7) {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF9C3' } }; // Vàng nhạt ăn NT
+              cell.font = { name: 'Times New Roman', size: 10, bold: true };
+            } else if (colNumber === 14) {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCCFBF1' } }; // Xanh ngọc ăn MG
+              cell.font = { name: 'Times New Roman', size: 10, bold: true };
+            } else if (colNumber === 21) {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } }; // Hổ phách tổng ăn
+              cell.font = { name: 'Times New Roman', size: 10, bold: true };
+            }
+
+            if (isReported) {
+              if ((colNumber === 5 || colNumber === 12 || colNumber === 19) && typeof cell.value === 'number' && cell.value > 0) {
+                cell.font = { name: 'Times New Roman', size: 10, bold: true, color: { argb: 'FF047857' } }; // Xanh lục có mặt
+              }
+              if ((colNumber === 6 || colNumber === 13 || colNumber === 20) && typeof cell.value === 'number' && cell.value > 0) {
+                cell.font = { name: 'Times New Roman', size: 10, bold: true, color: { argb: 'FFDC2626' } }; // Đỏ vắng
+              }
+            }
+          });
+
+          currentRow++;
+        });
+
+        // Summary Row (TỔNG CỘNG TOÀN TRƯỜNG)
+        if (!exportBlankTemplate && reportData) {
+          ws.mergeCells(`A${currentRow}:C${currentRow}`);
+          const sumLabelCell = ws.getCell(`A${currentRow}`);
+          sumLabelCell.value = 'TỔNG CỘNG TOÀN TRƯỜNG';
+          sumLabelCell.font = { name: 'Times New Roman', size: 10, bold: true };
+          sumLabelCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+          const sumRow = ws.getRow(currentRow);
+          // Khối Nhà trẻ
+          sumRow.getCell('D').value = preschoolTotals.totalNhaTre || 0;
+          sumRow.getCell('E').value = preschoolTotals.presentNhaTre || 0;
+          sumRow.getCell('F').value = preschoolTotals.absentNhaTre || 0;
+          sumRow.getCell('G').value = preschoolTotals.boardingNhaTre || 0;
+          sumRow.getCell('H').value = `${preschoolTotals.byYear?.[yNt0]?.present || 0}/${preschoolTotals.byYear?.[yNt0]?.total || 0} (${preschoolTotals.byYear?.[yNt0]?.boarding || 0} ăn)`;
+          sumRow.getCell('I').value = `${preschoolTotals.byYear?.[yNt1]?.present || 0}/${preschoolTotals.byYear?.[yNt1]?.total || 0} (${preschoolTotals.byYear?.[yNt1]?.boarding || 0} ăn)`;
+          sumRow.getCell('J').value = `${preschoolTotals.byYear?.[yNt2]?.present || 0}/${preschoolTotals.byYear?.[yNt2]?.total || 0} (${preschoolTotals.byYear?.[yNt2]?.boarding || 0} ăn)`;
+
+          // Khối Mẫu giáo
+          sumRow.getCell('K').value = preschoolTotals.totalMauGiao || 0;
+          sumRow.getCell('L').value = preschoolTotals.presentMauGiao || 0;
+          sumRow.getCell('M').value = preschoolTotals.absentMauGiao || 0;
+          sumRow.getCell('N').value = preschoolTotals.boardingMauGiao || 0;
+          sumRow.getCell('O').value = `${preschoolTotals.byYear?.[yMgBe]?.present || 0}/${preschoolTotals.byYear?.[yMgBe]?.total || 0} (${preschoolTotals.byYear?.[yMgBe]?.boarding || 0} ăn)`;
+          sumRow.getCell('P').value = `${preschoolTotals.byYear?.[yMgNho]?.present || 0}/${preschoolTotals.byYear?.[yMgNho]?.total || 0} (${preschoolTotals.byYear?.[yMgNho]?.boarding || 0} ăn)`;
+          sumRow.getCell('Q').value = `${preschoolTotals.byYear?.[yMgLon]?.present || 0}/${preschoolTotals.byYear?.[yMgLon]?.total || 0} (${preschoolTotals.byYear?.[yMgLon]?.boarding || 0} ăn)`;
+
+          // Toàn lớp
+          sumRow.getCell('R').value = preschoolTotals.totalStudents;
+          sumRow.getCell('S').value = preschoolTotals.presentStudents;
+          sumRow.getCell('T').value = preschoolTotals.absentStudents;
+          sumRow.getCell('U').value = preschoolTotals.boardingCount;
+          sumRow.getCell('V').value = preschoolTotals.canceledCount;
+
+          // Chuyên cần & Ghi chú
+          sumRow.getCell('W').value = `${preschoolTotals.attendanceRate.toFixed(1).replace('.', ',')}%`;
+          sumRow.getCell('X').value = `Đã báo cáo: ${reportData.reportedClasses}/${reportData.totalClasses} nhóm/lớp`;
+
+          sumRow.height = 24;
+
+          sumRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+            cell.font = { name: 'Times New Roman', size: 10, bold: true };
+            cell.border = thinBorder;
+            cell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FFF1F5F9' },
+            };
+            if (colNumber === 24) {
+              cell.alignment = { horizontal: 'left', vertical: 'middle' };
+            } else {
+              cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            }
+            if (colNumber === 7) {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF08A' } };
+            } else if (colNumber === 14) {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFA7F3D0' } };
+            } else if (colNumber === 21) {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
+            }
+          });
+
+          currentRow++;
+        }
+
+        // Add signatures section
+        currentRow += 2;
+
+        ws.mergeCells(`A${currentRow}:F${currentRow}`);
+        const reporterTitleCell = ws.getCell(`A${currentRow}`);
+        reporterTitleCell.value = signatureSettings.reporter_title;
+        reporterTitleCell.font = { name: 'Times New Roman', size: 11, bold: true };
+        reporterTitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+        ws.mergeCells(`S${currentRow}:X${currentRow}`);
+        const principalDateCell = ws.getCell(`S${currentRow}`);
+        principalDateCell.value = `Ngày ${dateParts.day} tháng ${dateParts.month} năm ${dateParts.year}`;
+        principalDateCell.font = { name: 'Times New Roman', size: 11, italic: true };
+        principalDateCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        currentRow++;
+
+        ws.mergeCells(`A${currentRow}:F${currentRow}`);
+        const reporterSubCell = ws.getCell(`A${currentRow}`);
+        reporterSubCell.value = '(Ký và ghi rõ họ tên)';
+        reporterSubCell.font = { name: 'Times New Roman', size: 10, italic: true };
+        reporterSubCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+        ws.mergeCells(`S${currentRow}:X${currentRow}`);
+        const principalTitleCell = ws.getCell(`S${currentRow}`);
+        principalTitleCell.value = signatureSettings.principal_title;
+        principalTitleCell.font = { name: 'Times New Roman', size: 11, bold: true };
+        principalTitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        currentRow++;
+
+        ws.mergeCells(`S${currentRow}:X${currentRow}`);
+        const principalSubCell = ws.getCell(`S${currentRow}`);
+        principalSubCell.value = '(Ký, đóng dấu và ghi rõ họ tên)';
+        principalSubCell.font = { name: 'Times New Roman', size: 10, italic: true };
+        principalSubCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+        // Space for signatures
+        currentRow += 4;
+
+        ws.mergeCells(`A${currentRow}:F${currentRow}`);
+        const reporterNameCell = ws.getCell(`A${currentRow}`);
+        reporterNameCell.value = signatureSettings.reporter_name;
+        reporterNameCell.font = { name: 'Times New Roman', size: 11, bold: true };
+        reporterNameCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+        ws.mergeCells(`S${currentRow}:X${currentRow}`);
+        const principalNameCell = ws.getCell(`S${currentRow}`);
+        principalNameCell.value = signatureSettings.principal_name;
+        principalNameCell.font = { name: 'Times New Roman', size: 11, bold: true };
+        principalNameCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+        // Generate binary and trigger download
+        const buffer = await wb.xlsx.writeBuffer();
+        const blob = new Blob([buffer], {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = exportBlankTemplate
+          ? 'Mau_trang_do_tuoi_va_suat_an_25cot.xlsx'
+          : `Bao_cao_do_tuoi_va_suat_an_25cot_ngay_${dateParts.day}-${dateParts.month}-${dateParts.year}.xlsx`;
+        a.click();
+        URL.revokeObjectURL(url);
+        return;
+      }
+
+      // -------------------------------------------------------------
+      // 3. NẾU ĐANG Ở CHẾ ĐỘ "BIỂU RÚT GỌN (CƠ BẢN)"
+      // -------------------------------------------------------------
+      if (viewMode === 'PRESCHOOL_COMPACT') {
+        const ws = wb.addWorksheet('SiSo_RutGon', {
+          pageSetup: {
+            orientation: 'landscape',
+            paperSize: 9,
+            fitToPage: true,
+            fitToWidth: 1,
+            fitToHeight: 0,
+            margins: { left: 0.4, right: 0.4, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 },
+          },
+        });
+
+        ws.columns = [
+          { key: 'class', width: 14 },
+          { key: 'teacher', width: 22 },
+          { key: 'allTotal', width: 12 },
+          { key: 'allAbsent', width: 12 },
+          { key: 'boardTotal', width: 12 },
+          { key: 'boardAbsent', width: 12 },
+          { key: 'outTotal', width: 12 },
+          { key: 'outAbsent', width: 12 },
+          { key: 'absentNames', width: 28 },
+          { key: 'address', width: 20 },
+          { key: 'absentRate', width: 14 },
+          { key: 'rate', width: 14 },
+        ];
+
+        let rIdx = 1;
+
+        ws.mergeCells(`A${rIdx}:D${rIdx}`);
+        const subDeptCell = ws.getCell(`A${rIdx}`);
+        subDeptCell.value = (settings?.sub_department_name || 'UBND XÃ XA DUNG').toUpperCase();
+        subDeptCell.font = { name: 'Times New Roman', size: 10, bold: true };
+
+        ws.mergeCells(`I${rIdx}:L${rIdx}`);
+        const nationCell1 = ws.getCell(`I${rIdx}`);
+        nationCell1.value = 'CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM';
+        nationCell1.font = { name: 'Times New Roman', size: 10, bold: true };
+        nationCell1.alignment = { horizontal: 'center', vertical: 'middle' };
+        rIdx++;
+
+        ws.mergeCells(`A${rIdx}:D${rIdx}`);
+        const schoolNameCell = ws.getCell(`A${rIdx}`);
+        schoolNameCell.value = formattedSchoolName;
+        schoolNameCell.font = { name: 'Times New Roman', size: 10, bold: true };
+
+        ws.mergeCells(`I${rIdx}:L${rIdx}`);
+        const nationCell2 = ws.getCell(`I${rIdx}`);
+        nationCell2.value = 'Độc lập - Tự do - Hạnh phúc';
+        nationCell2.font = { name: 'Times New Roman', size: 10, bold: true, underline: 'single' };
+        nationCell2.alignment = { horizontal: 'center', vertical: 'middle' };
+        rIdx++;
+
+        if (selectedCampusId !== 'all') {
+          ws.mergeCells(`A${rIdx}:D${rIdx}`);
+          const campusCell = ws.getCell(`A${rIdx}`);
+          const selectedCampus = campuses.find((c) => c.id === selectedCampusId);
+          campusCell.value = `PHÂN HIỆU: ${(selectedCampus ? selectedCampus.name : '...........').toUpperCase()}`;
+          campusCell.font = { name: 'Times New Roman', size: 10, bold: true };
+          rIdx++;
+        }
+
+        ws.getRow(rIdx).height = 8;
+        rIdx++;
+
+        const titleText = exportBlankTemplate || blankDateInTitle
+          ? `${baseTitle} NGÀY .......THÁNG ...... NĂM ${dateParts.year}`
+          : `${baseTitle} NGÀY ${dateParts.day} THÁNG ${dateParts.month} NĂM ${dateParts.year}`;
+
+        ws.mergeCells(`A${rIdx}:L${rIdx}`);
+        const titleCell = ws.getCell(`A${rIdx}`);
+        titleCell.value = titleText;
+        titleCell.font = { name: 'Times New Roman', size: 13, bold: true };
+        titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        rIdx++;
+
+        ws.mergeCells(`A${rIdx}:L${rIdx}`);
+        const subTitleCell = ws.getCell(`A${rIdx}`);
+        subTitleCell.value = '(Biểu thống kê sĩ số & bán trú mầm non rút gọn)';
+        subTitleCell.font = { name: 'Times New Roman', size: 10, italic: true };
+        subTitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        rIdx++;
+
+        ws.getRow(rIdx).height = 8;
+        rIdx++;
+
+        const headerStartRow = rIdx;
+
+        ws.mergeCells(`A${headerStartRow}:A${headerStartRow + 1}`);
+        ws.getCell(`A${headerStartRow}`).value = 'Lớp';
+
+        ws.mergeCells(`B${headerStartRow}:B${headerStartRow + 1}`);
+        ws.getCell(`B${headerStartRow}`).value = 'Giáo viên chủ nhiệm';
+
+        ws.mergeCells(`C${headerStartRow}:D${headerStartRow}`);
+        ws.getCell(`C${headerStartRow}`).value = 'Học sinh toàn trường';
+
+        ws.mergeCells(`E${headerStartRow}:F${headerStartRow}`);
+        ws.getCell(`E${headerStartRow}`).value = 'Học sinh bán trú';
+
+        ws.mergeCells(`G${headerStartRow}:H${headerStartRow}`);
+        ws.getCell(`G${headerStartRow}`).value = 'Học sinh ngoại trú';
+
+        ws.mergeCells(`I${headerStartRow}:I${headerStartRow + 1}`);
+        ws.getCell(`I${headerStartRow}`).value = 'Tên học sinh nghỉ';
+
+        ws.mergeCells(`J${headerStartRow}:J${headerStartRow + 1}`);
+        ws.getCell(`J${headerStartRow}`).value = 'Địa chỉ';
+
+        ws.mergeCells(`K${headerStartRow}:K${headerStartRow + 1}`);
+        ws.getCell(`K${headerStartRow}`).value = 'Tỉ lệ\nvắng (%)';
+
+        ws.mergeCells(`L${headerStartRow}:L${headerStartRow + 1}`);
+        ws.getCell(`L${headerStartRow}`).value = 'Tỉ lệ\nchuyên cần (%)';
+
+        ws.getCell(`C${headerStartRow + 1}`).value = 'Tổng số';
+        ws.getCell(`D${headerStartRow + 1}`).value = 'Số vắng';
+        ws.getCell(`E${headerStartRow + 1}`).value = 'Tổng số';
+        ws.getCell(`F${headerStartRow + 1}`).value = 'Số vắng';
+        ws.getCell(`G${headerStartRow + 1}`).value = 'Tổng số';
+        ws.getCell(`H${headerStartRow + 1}`).value = 'Số vắng';
+
+        for (let r = headerStartRow; r <= headerStartRow + 1; r++) {
+          const row = ws.getRow(r);
+          row.eachCell({ includeEmpty: true }, (cell) => {
+            cell.font = { name: 'Times New Roman', size: 10, bold: true };
+            cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+            cell.border = thinBorder;
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+          });
+        }
+
+        let currentRow = headerStartRow + 2;
+
+        const rowsToExport = exportBlankTemplate
+          ? classes.map((c) => ({
+              classItem: c,
+              teacher: null,
+              report: null,
+              status: 'NOT_REPORTED' as const,
+              values: {},
+            }))
+          : (reportData?.rows || []);
+
+        rowsToExport.forEach((row: any) => {
+          const isReported = !exportBlankTemplate && row.status !== 'NOT_REPORTED';
+          const allVal = allIndicator && row.values ? row.values[allIndicator.id] : null;
+          const boardingVal = boardingIndicator && row.values ? row.values[boardingIndicator.id] : null;
+
+          const totalAll = allVal?.total ?? 0;
+          const absentAll = allVal?.absent ?? 0;
+          const presentAll = allVal?.present ?? (totalAll - absentAll);
+
+          const totalBoarding = boardingVal?.total ?? 0;
+          const absentBoarding = boardingVal?.absent ?? 0;
+          
+          const totalNgoaiTru = Math.max(0, totalAll - totalBoarding);
+          const absentNgoaiTru = Math.max(0, absentAll - absentBoarding);
+
+          const absentRate = totalAll > 0 ? (absentAll / totalAll) * 100 : 0;
+          const presentRate = totalAll > 0 ? (presentAll / totalAll) * 100 : 0;
+
+          const studentNames = getAbsentStudentText(row);
+          const studentAddresses = getAbsentStudentAddresses(row);
+
+          const dataRow = ws.getRow(currentRow);
+          dataRow.getCell('A').value = row.classItem?.class_name || '';
+          dataRow.getCell('B').value = row.teacher?.full_name || '-';
+          dataRow.getCell('C').value = isReported ? totalAll : (exportBlankTemplate ? '' : totalAll || '-');
+          dataRow.getCell('D').value = isReported ? absentAll : (exportBlankTemplate ? '' : '-');
+          dataRow.getCell('E').value = isReported ? totalBoarding : (exportBlankTemplate ? '' : totalBoarding || '-');
+          dataRow.getCell('F').value = isReported ? absentBoarding : (exportBlankTemplate ? '' : '-');
+          dataRow.getCell('G').value = isReported ? totalNgoaiTru : (exportBlankTemplate ? '' : totalNgoaiTru || '-');
+          dataRow.getCell('H').value = isReported ? absentNgoaiTru : (exportBlankTemplate ? '' : '-');
+          dataRow.getCell('I').value = isReported ? (studentNames || '') : (exportBlankTemplate ? '' : 'Chưa báo cáo');
+          dataRow.getCell('J').value = isReported ? (studentAddresses || '-') : (exportBlankTemplate ? '' : '-');
+          dataRow.getCell('K').value = isReported ? `${absentRate.toFixed(1).replace('.', ',')}%` : (exportBlankTemplate ? '' : '-');
+          dataRow.getCell('L').value = isReported ? `${presentRate.toFixed(1).replace('.', ',')}%` : (exportBlankTemplate ? '' : '-');
+
+          dataRow.height = 22;
+
+          dataRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+            cell.font = { name: 'Times New Roman', size: 10 };
+            cell.border = thinBorder;
+            if (colNumber === 1 || colNumber === 2) {
+              cell.alignment = { horizontal: 'left', vertical: 'middle' };
+            } else if (colNumber === 9 || colNumber === 10) {
+              cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+            } else {
+              cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            }
+          });
+
+          currentRow++;
+        });
+
+        // Add signatures section
+        currentRow += 2;
+        ws.mergeCells(`A${currentRow}:D${currentRow}`);
+        const reporterTitleCell = ws.getCell(`A${currentRow}`);
+        reporterTitleCell.value = signatureSettings.reporter_title;
+        reporterTitleCell.font = { name: 'Times New Roman', size: 11, bold: true };
+        reporterTitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+        ws.mergeCells(`I${currentRow}:L${currentRow}`);
+        const principalDateCell = ws.getCell(`I${currentRow}`);
+        principalDateCell.value = `Ngày ${dateParts.day} tháng ${dateParts.month} năm ${dateParts.year}`;
+        principalDateCell.font = { name: 'Times New Roman', size: 11, italic: true };
+        principalDateCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        currentRow++;
+
+        ws.mergeCells(`A${currentRow}:D${currentRow}`);
+        const reporterSubCell = ws.getCell(`A${currentRow}`);
+        reporterSubCell.value = '(Ký và ghi rõ họ tên)';
+        reporterSubCell.font = { name: 'Times New Roman', size: 10, italic: true };
+        reporterSubCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+        ws.mergeCells(`I${currentRow}:L${currentRow}`);
+        const principalTitleCell = ws.getCell(`I${currentRow}`);
+        principalTitleCell.value = signatureSettings.principal_title;
+        principalTitleCell.font = { name: 'Times New Roman', size: 11, bold: true };
+        principalTitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        currentRow += 4;
+
+        ws.mergeCells(`A${currentRow}:D${currentRow}`);
+        const reporterNameCell = ws.getCell(`A${currentRow}`);
+        reporterNameCell.value = signatureSettings.reporter_name;
+        reporterNameCell.font = { name: 'Times New Roman', size: 11, bold: true };
+        reporterNameCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+        ws.mergeCells(`I${currentRow}:L${currentRow}`);
+        const principalNameCell = ws.getCell(`I${currentRow}`);
+        principalNameCell.value = signatureSettings.principal_name;
+        principalNameCell.font = { name: 'Times New Roman', size: 11, bold: true };
+        principalNameCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+        const buffer = await wb.xlsx.writeBuffer();
+        const blob = new Blob([buffer], {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = exportBlankTemplate
+          ? 'Mau_trang_si_so_rut_gon.xlsx'
+          : `Bao_cao_si_so_rut_gon_ngay_${dateParts.day}-${dateParts.month}-${dateParts.year}.xlsx`;
+        a.click();
+        URL.revokeObjectURL(url);
+        return;
+      }
+
+      // -------------------------------------------------------------
+      // 4. MẪU "BIỂU CHI TIẾT MẦM NON (24 CỘT GDMN)" (viewMode === 'PRESCHOOL_DETAILED')
+      // -------------------------------------------------------------
+      const ws = wb.addWorksheet('ChiTiet_24Cot_GDMN', {
         pageSetup: {
           orientation: 'landscape',
           paperSize: 9, // A4
@@ -794,43 +1560,50 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
         },
       });
 
-      // Set 22 column widths for preschool statistics
+      // 24 cột chuẩn giáo dục mầm non
       ws.columns = [
         { key: 'stt', width: 6 },            // A: STT
         { key: 'class', width: 18 },          // B: Nhóm / Lớp
         { key: 'teacher', width: 22 },        // C: Giáo viên phụ trách
+        // Sĩ số trẻ
         { key: 'totalAll', width: 9 },        // D: Sĩ số - Tổng
         { key: 'female', width: 8 },          // E: Sĩ số - Nữ
         { key: 'ethnic', width: 8 },          // F: Sĩ số - DTTS
         { key: 'femaleEthnic', width: 9 },    // G: Sĩ số - Nữ DTTS
         { key: 'poor', width: 8 },            // H: Sĩ số - Hộ nghèo
         { key: 'disabled', width: 8 },        // I: Sĩ số - Khuyết tật
+        // Đi học / có mặt
         { key: 'presentAll', width: 9 },      // J: Đi học - Tổng
         { key: 'presentFemale', width: 8 },   // K: Đi học - Nữ
         { key: 'presentEthnic', width: 8 },   // L: Đi học - DTTS
+        // Nghỉ học / vắng
         { key: 'absentAll', width: 9 },       // M: Nghỉ học - Tổng
         { key: 'absentExcused', width: 8 },   // N: Nghỉ học - Có phép
         { key: 'absentUnexcused', width: 8 }, // O: Nghỉ học - K.phép
-        { key: 'boardingCount', width: 9 },   // P: Bán trú - Trẻ ăn
-        { key: 'lunchCount', width: 8 },      // Q: Bán trú - Trưa
-        { key: 'snackCount', width: 8 },      // R: Bán trú - Xế
-        { key: 'canceledCount', width: 8 },   // S: Bán trú - Cắt ăn
-        { key: 'healthCount', width: 8 },     // T: Sức khỏe - Sốt/mệt
-        { key: 'notes', width: 34 },          // U: Tên trẻ nghỉ & Ghi chú
-        { key: 'attendanceRate', width: 13 }, // V: % Chuyên cần
+        // Bán trú & khẩu phần (6 cột)
+        { key: 'boardingCount', width: 9 },   // P: Bán trú - Tổng ăn
+        { key: 'boardingNT', width: 9 },      // Q: Bán trú - Ăn NT
+        { key: 'boardingMG', width: 9 },      // R: Bán trú - Ăn MG
+        { key: 'lunchCount', width: 8 },      // S: Bán trú - Trưa
+        { key: 'snackCount', width: 8 },      // T: Bán trú - Xế
+        { key: 'canceledCount', width: 8 },   // U: Bán trú - Cắt ăn
+        // Sức khỏe & ghi chú
+        { key: 'healthCount', width: 8 },     // V: Sức khỏe - Sốt/mệt
+        { key: 'notes', width: 34 },          // W: Tên trẻ nghỉ & Ghi chú
+        { key: 'attendanceRate', width: 13 }, // X: % Chuyên cần
       ];
 
       let rIdx = 1;
 
       // Row 1: Left: UBND XÃ XA DUNG. Right: CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM
-      ws.mergeCells(`A${rIdx}:F${rIdx}`);
+      ws.mergeCells(`A${rIdx}:G${rIdx}`);
       const subDeptCell = ws.getCell(`A${rIdx}`);
       subDeptCell.value = (settings?.sub_department_name || 'UBND XÃ XA DUNG').toUpperCase();
       subDeptCell.font = { name: 'Times New Roman', size: 10, bold: true };
       subDeptCell.alignment = { horizontal: 'left', vertical: 'middle' };
 
-      ws.mergeCells(`Q${rIdx}:V${rIdx}`);
-      const nationCell1 = ws.getCell(`Q${rIdx}`);
+      ws.mergeCells(`R${rIdx}:X${rIdx}`);
+      const nationCell1 = ws.getCell(`R${rIdx}`);
       nationCell1.value = 'CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM';
       nationCell1.font = { name: 'Times New Roman', size: 10, bold: true };
       nationCell1.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -839,14 +1612,14 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
       rIdx++;
 
       // Row 2: Left: TRƯỜNG MẦM NON. Right: Độc lập - Tự do - Hạnh phúc
-      ws.mergeCells(`A${rIdx}:F${rIdx}`);
+      ws.mergeCells(`A${rIdx}:G${rIdx}`);
       const schoolNameCell = ws.getCell(`A${rIdx}`);
       schoolNameCell.value = formattedSchoolName;
       schoolNameCell.font = { name: 'Times New Roman', size: 10, bold: true };
       schoolNameCell.alignment = { horizontal: 'left', vertical: 'middle' };
 
-      ws.mergeCells(`Q${rIdx}:V${rIdx}`);
-      const nationCell2 = ws.getCell(`Q${rIdx}`);
+      ws.mergeCells(`R${rIdx}:X${rIdx}`);
+      const nationCell2 = ws.getCell(`R${rIdx}`);
       nationCell2.value = 'Độc lập - Tự do - Hạnh phúc';
       nationCell2.font = { name: 'Times New Roman', size: 10, bold: true, underline: 'single' };
       nationCell2.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -856,7 +1629,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
 
       // Row 3: PHÂN HIỆU (if selected)
       if (selectedCampusId !== 'all') {
-        ws.mergeCells(`A${rIdx}:F${rIdx}`);
+        ws.mergeCells(`A${rIdx}:G${rIdx}`);
         const campusCell = ws.getCell(`A${rIdx}`);
         const selectedCampus = campuses.find((c) => c.id === selectedCampusId);
         campusCell.value = `PHÂN HIỆU: ${(selectedCampus ? selectedCampus.name : '...........').toUpperCase()}`;
@@ -875,7 +1648,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
         ? `${baseTitle} NGÀY .......THÁNG ...... NĂM ${dateParts.year}`
         : `${baseTitle} NGÀY ${dateParts.day} THÁNG ${dateParts.month} NĂM ${dateParts.year}`;
 
-      ws.mergeCells(`A${rIdx}:V${rIdx}`);
+      ws.mergeCells(`A${rIdx}:X${rIdx}`);
       const titleCell = ws.getCell(`A${rIdx}`);
       titleCell.value = titleText;
       titleCell.font = { name: 'Times New Roman', size: 13, bold: true };
@@ -883,10 +1656,10 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
       ws.getRow(rIdx).height = 28;
       rIdx++;
 
-      // Subtitle: Nhà trường tổng hợp báo cáo từ các nhóm/lớp
-      ws.mergeCells(`A${rIdx}:V${rIdx}`);
+      // Subtitle
+      ws.mergeCells(`A${rIdx}:X${rIdx}`);
       const subTitleCell = ws.getCell(`A${rIdx}`);
-      subTitleCell.value = '(Thống kê tổng hợp số liệu trẻ theo dõi hàng ngày từ các nhóm / lớp mầm non)';
+      subTitleCell.value = '(Biểu thống kê tổng hợp số liệu trẻ theo dõi hàng ngày - 24 cột chuẩn giáo dục Mầm Non)';
       subTitleCell.font = { name: 'Times New Roman', size: 10, italic: true };
       subTitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
       ws.getRow(rIdx).height = 16;
@@ -906,7 +1679,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
       ws.getCell(`B${headerStartRow}`).value = 'Nhóm / Lớp';
 
       ws.mergeCells(`C${headerStartRow}:C${headerStartRow + 1}`);
-      ws.getCell(`C${headerStartRow}`).value = 'Giáo viên\nphụ trách';
+      ws.getCell(`C${headerStartRow}`).value = 'Giáo viên phụ trách';
 
       ws.mergeCells(`D${headerStartRow}:I${headerStartRow}`);
       ws.getCell(`D${headerStartRow}`).value = 'SĨ SỐ TRẺ';
@@ -917,14 +1690,17 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
       ws.mergeCells(`M${headerStartRow}:O${headerStartRow}`);
       ws.getCell(`M${headerStartRow}`).value = 'NGHỈ HỌC / VẮNG';
 
-      ws.mergeCells(`P${headerStartRow}:S${headerStartRow}`);
-      ws.getCell(`P${headerStartRow}`).value = 'ĂN BÁN TRÚ';
-
-      ws.mergeCells(`T${headerStartRow}:U${headerStartRow}`);
-      ws.getCell(`T${headerStartRow}`).value = 'SỨC KHỎE & THEO DÕI';
+      ws.mergeCells(`P${headerStartRow}:U${headerStartRow}`);
+      ws.getCell(`P${headerStartRow}`).value = 'BÁN TRÚ & KHẨU PHẦN';
 
       ws.mergeCells(`V${headerStartRow}:V${headerStartRow + 1}`);
-      ws.getCell(`V${headerStartRow}`).value = 'TỈ LỆ\nCHUYÊN CẦN';
+      ws.getCell(`V${headerStartRow}`).value = 'SỐT/MỆT';
+
+      ws.mergeCells(`W${headerStartRow}:W${headerStartRow + 1}`);
+      ws.getCell(`W${headerStartRow}`).value = 'Tên trẻ nghỉ & Ghi chú';
+
+      ws.mergeCells(`X${headerStartRow}:X${headerStartRow + 1}`);
+      ws.getCell(`X${headerStartRow}`).value = 'TỈ LỆ\nCHUYÊN CẦN';
 
       // Row 2 sub-columns
       ws.getCell(`D${headerStartRow + 1}`).value = 'Tổng';
@@ -943,12 +1719,11 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
       ws.getCell(`O${headerStartRow + 1}`).value = 'K.phép';
 
       ws.getCell(`P${headerStartRow + 1}`).value = 'Tổng ăn';
-      ws.getCell(`Q${headerStartRow + 1}`).value = 'Trưa';
-      ws.getCell(`R${headerStartRow + 1}`).value = 'Xế';
-      ws.getCell(`S${headerStartRow + 1}`).value = 'Cắt ăn';
-
-      ws.getCell(`T${headerStartRow + 1}`).value = 'Sốt/mệt';
-      ws.getCell(`U${headerStartRow + 1}`).value = 'Tên trẻ nghỉ & Ghi chú';
+      ws.getCell(`Q${headerStartRow + 1}`).value = 'Ăn NT';
+      ws.getCell(`R${headerStartRow + 1}`).value = 'Ăn MG';
+      ws.getCell(`S${headerStartRow + 1}`).value = 'Trưa';
+      ws.getCell(`T${headerStartRow + 1}`).value = 'Xế';
+      ws.getCell(`U${headerStartRow + 1}`).value = 'Cắt ăn';
 
       ws.getRow(headerStartRow).height = 24;
       ws.getRow(headerStartRow + 1).height = 24;
@@ -1009,7 +1784,28 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
         const absentExcused = ps?.absent_excused ?? (row.report?.absent_students?.filter((s: any) => s.is_excused).length || 0);
         const absentUnexcused = ps?.absent_unexcused ?? Math.max(0, absentAll - absentExcused);
 
-        const boardingCount = ps?.boarding_count ?? (boardingIndicator ? (row.values?.[boardingIndicator.id]?.total || 0) : 0);
+        const isNT = isNhaTreClass(row.classItem?.class_name, row.classItem?.grade);
+        let bNT = ps?.boarding_nha_tre;
+        if (isReported && isNT && (bNT === undefined || bNT === null || (Number(bNT) === 0 && presentAll > 0))) {
+          bNT = presentAll;
+        } else if (!bNT) {
+          bNT = 0;
+        }
+
+        let bMG = ps?.boarding_mau_giao;
+        if (isReported && !isNT && (bMG === undefined || bMG === null || (Number(bMG) === 0 && presentAll > 0))) {
+          bMG = presentAll;
+        } else if (!bMG) {
+          bMG = 0;
+        }
+
+        let boardingCount = ps?.boarding_count;
+        if (isReported && (boardingCount === undefined || boardingCount === null || (Number(boardingCount) === 0 && presentAll > 0))) {
+          boardingCount = presentAll;
+        } else if (!boardingCount) {
+          boardingCount = (Number(bNT) || 0) + (Number(bMG) || 0) || (boardingIndicator ? (row.values?.[boardingIndicator.id]?.total || 0) : 0);
+        }
+
         const lunchCount = ps?.lunch_count ?? boardingCount;
         const snackCount = ps?.snack_count ?? boardingCount;
         const canceledCount = ps?.canceled_count ?? 0;
@@ -1049,13 +1845,15 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
         dataRow.getCell('O').value = isReported ? absentUnexcused : (exportBlankTemplate ? '' : '-');
 
         dataRow.getCell('P').value = isReported ? boardingCount : (exportBlankTemplate ? '' : '-');
-        dataRow.getCell('Q').value = isReported ? lunchCount : (exportBlankTemplate ? '' : '-');
-        dataRow.getCell('R').value = isReported ? snackCount : (exportBlankTemplate ? '' : '-');
-        dataRow.getCell('S').value = isReported ? canceledCount : (exportBlankTemplate ? '' : '-');
+        dataRow.getCell('Q').value = isReported ? bNT : (exportBlankTemplate ? '' : '-');
+        dataRow.getCell('R').value = isReported ? bMG : (exportBlankTemplate ? '' : '-');
+        dataRow.getCell('S').value = isReported ? lunchCount : (exportBlankTemplate ? '' : '-');
+        dataRow.getCell('T').value = isReported ? snackCount : (exportBlankTemplate ? '' : '-');
+        dataRow.getCell('U').value = isReported ? canceledCount : (exportBlankTemplate ? '' : '-');
 
-        dataRow.getCell('T').value = isReported ? healthIssueCount : (exportBlankTemplate ? '' : '-');
-        dataRow.getCell('U').value = notesText;
-        dataRow.getCell('V').value = isReported ? `${presentRate.toFixed(1).replace('.', ',')}%` : (exportBlankTemplate ? '' : '-');
+        dataRow.getCell('V').value = isReported ? healthIssueCount : (exportBlankTemplate ? '' : '-');
+        dataRow.getCell('W').value = notesText;
+        dataRow.getCell('X').value = isReported ? `${presentRate.toFixed(1).replace('.', ',')}%` : (exportBlankTemplate ? '' : '-');
 
         dataRow.height = 22;
 
@@ -1063,11 +1861,11 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
           cell.font = { name: 'Times New Roman', size: 10 };
           cell.border = thinBorder;
 
-          if (colNumber === 1 || colNumber === 22) {
+          if (colNumber === 1 || colNumber === 24) {
             cell.alignment = { horizontal: 'center', vertical: 'middle' };
           } else if (colNumber === 2 || colNumber === 3) {
             cell.alignment = { horizontal: 'left', vertical: 'middle' };
-          } else if (colNumber === 21) {
+          } else if (colNumber === 23) {
             cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
           } else {
             cell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -1077,7 +1875,7 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
             if (colNumber === 13 && absentAll > 0) {
               cell.font = { name: 'Times New Roman', size: 10, bold: true, color: { argb: 'FFDC2626' } };
             }
-            if (colNumber === 20 && healthIssueCount > 0) {
+            if (colNumber === 22 && healthIssueCount > 0) {
               cell.font = { name: 'Times New Roman', size: 10, bold: true, color: { argb: 'FFDC2626' } };
             }
           }
@@ -1111,13 +1909,15 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
         sumRow.getCell('O').value = preschoolTotals.absentUnexcused;
 
         sumRow.getCell('P').value = preschoolTotals.boardingCount;
-        sumRow.getCell('Q').value = preschoolTotals.lunchCount;
-        sumRow.getCell('R').value = preschoolTotals.snackCount;
-        sumRow.getCell('S').value = preschoolTotals.canceledCount;
+        sumRow.getCell('Q').value = preschoolTotals.boardingNhaTre || 0;
+        sumRow.getCell('R').value = preschoolTotals.boardingMauGiao || 0;
+        sumRow.getCell('S').value = preschoolTotals.lunchCount;
+        sumRow.getCell('T').value = preschoolTotals.snackCount;
+        sumRow.getCell('U').value = preschoolTotals.canceledCount;
 
-        sumRow.getCell('T').value = preschoolTotals.healthIssueCount;
-        sumRow.getCell('U').value = `Đã báo cáo: ${reportData.reportedClasses}/${reportData.totalClasses} nhóm/lớp`;
-        sumRow.getCell('V').value = `${preschoolTotals.attendanceRate.toFixed(1).replace('.', ',')}%`;
+        sumRow.getCell('V').value = preschoolTotals.healthIssueCount;
+        sumRow.getCell('W').value = `Đã báo cáo: ${reportData.reportedClasses}/${reportData.totalClasses} nhóm/lớp`;
+        sumRow.getCell('X').value = `${preschoolTotals.attendanceRate.toFixed(1).replace('.', ',')}%`;
 
         sumRow.height = 24;
 
@@ -1129,9 +1929,9 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
             pattern: 'solid',
             fgColor: { argb: 'FFF1F5F9' },
           };
-          if (colNumber >= 4 && colNumber <= 20) {
+          if (colNumber >= 4 && colNumber <= 22) {
             cell.alignment = { horizontal: 'center', vertical: 'middle' };
-          } else if (colNumber === 21) {
+          } else if (colNumber === 23) {
             cell.alignment = { horizontal: 'left', vertical: 'middle' };
           } else {
             cell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -1153,8 +1953,8 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
       reporterTitleCell.font = { name: 'Times New Roman', size: 11, bold: true };
       reporterTitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
 
-      ws.mergeCells(`Q${currentRow}:V${currentRow}`);
-      const principalDateCell = ws.getCell(`Q${currentRow}`);
+      ws.mergeCells(`S${currentRow}:X${currentRow}`);
+      const principalDateCell = ws.getCell(`S${currentRow}`);
       principalDateCell.value = `Ngày ${dateParts.day} tháng ${dateParts.month} năm ${dateParts.year}`;
       principalDateCell.font = { name: 'Times New Roman', size: 11, italic: true };
       principalDateCell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -1166,15 +1966,15 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
       reporterSubCell.font = { name: 'Times New Roman', size: 10, italic: true };
       reporterSubCell.alignment = { horizontal: 'center', vertical: 'middle' };
 
-      ws.mergeCells(`Q${currentRow}:V${currentRow}`);
-      const principalTitleCell = ws.getCell(`Q${currentRow}`);
+      ws.mergeCells(`S${currentRow}:X${currentRow}`);
+      const principalTitleCell = ws.getCell(`S${currentRow}`);
       principalTitleCell.value = signatureSettings.principal_title;
       principalTitleCell.font = { name: 'Times New Roman', size: 11, bold: true };
       principalTitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
       currentRow++;
 
-      ws.mergeCells(`Q${currentRow}:V${currentRow}`);
-      const principalSubCell = ws.getCell(`Q${currentRow}`);
+      ws.mergeCells(`S${currentRow}:X${currentRow}`);
+      const principalSubCell = ws.getCell(`S${currentRow}`);
       principalSubCell.value = '(Ký, đóng dấu và ghi rõ họ tên)';
       principalSubCell.font = { name: 'Times New Roman', size: 10, italic: true };
       principalSubCell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -1188,8 +1988,8 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
       reporterNameCell.font = { name: 'Times New Roman', size: 11, bold: true };
       reporterNameCell.alignment = { horizontal: 'center', vertical: 'middle' };
 
-      ws.mergeCells(`Q${currentRow}:V${currentRow}`);
-      const principalNameCell = ws.getCell(`Q${currentRow}`);
+      ws.mergeCells(`S${currentRow}:X${currentRow}`);
+      const principalNameCell = ws.getCell(`S${currentRow}`);
       principalNameCell.value = signatureSettings.principal_name;
       principalNameCell.font = { name: 'Times New Roman', size: 11, bold: true };
       principalNameCell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -1203,8 +2003,8 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
       const a = document.createElement('a');
       a.href = url;
       a.download = exportBlankTemplate
-        ? 'Mau_thong_ke_si_so_mam_non.xlsx'
-        : `Bao_cao_thong_ke_mam_non_${dateParts.day}-${dateParts.month}-${dateParts.year}.xlsx`;
+        ? 'Mau_trang_chi_tiet_24_cot_GDMN.xlsx'
+        : `Bao_cao_chi_tiet_24_cot_GDMN_ngay_${dateParts.day}-${dateParts.month}-${dateParts.year}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -1278,19 +2078,36 @@ export const DailyReportPage: React.FC<DailyReportPageProps> = ({ onNavigate }) 
             type="button"
             onClick={() => handleExportExcel(false)}
             disabled={exporting}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 shadow-2xs transition-colors disabled:opacity-50"
-            title="Xuất file Excel có đầy đủ đường kẻ và số liệu ngày đã chọn (22 cột chuẩn mầm non)"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 shadow-2xs transition-colors disabled:opacity-50 cursor-pointer"
+            title={`Xuất file Excel theo đúng mẫu đang chọn: ${
+              viewMode === 'PRESCHOOL_AGE_BOARDING'
+                ? 'Biểu theo Độ Tuổi & Suất Ăn (25 cột mở rộng)'
+                : viewMode === 'PRESCHOOL_ORIGINAL_EXCEL'
+                ? 'Mẫu báo cáo gốc (Hình ảnh Excel cột vàng)'
+                : viewMode === 'PRESCHOOL_DETAILED'
+                ? 'Biểu chi tiết Mầm Non (24 cột GDMN)'
+                : 'Biểu rút gọn (Cơ bản)'
+            }`}
           >
             <Download className="w-4 h-4 text-emerald-700" />
             <span>{exporting ? 'ĐANG XUẤT...' : 'XUẤT EXCEL'}</span>
+            <span className="hidden sm:inline-block text-[10px] bg-emerald-200/80 text-emerald-950 px-1.5 py-0.5 rounded font-black ml-0.5">
+              {viewMode === 'PRESCHOOL_AGE_BOARDING'
+                ? '25 CỘT'
+                : viewMode === 'PRESCHOOL_ORIGINAL_EXCEL'
+                ? 'MẪU GỐC'
+                : viewMode === 'PRESCHOOL_DETAILED'
+                ? '24 CỘT'
+                : 'RÚT GỌN'}
+            </span>
           </button>
 
           <button
             type="button"
             onClick={() => handleExportExcel(true)}
             disabled={exporting}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 shadow-2xs transition-colors disabled:opacity-50"
-            title="Xuất file Excel mẫu trắng y hệt hình gốc"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 shadow-2xs transition-colors disabled:opacity-50 cursor-pointer"
+            title="Xuất file Excel mẫu trắng theo đúng mẫu biểu đang chọn"
           >
             <FileSpreadsheet className="w-4 h-4 text-slate-600" />
             <span>MẪU TRẮNG</span>
