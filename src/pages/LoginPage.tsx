@@ -55,8 +55,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     cleanDuplicateTeachers,
   } = useSchool();
 
-  // Mode: GVCN (default) or ADMIN/BGH
-  const [activeTab, setActiveTab] = useState<'GVCN' | 'ADMIN'>(isAdminRoute ? 'ADMIN' : 'GVCN');
+  // Mode: strictly determined by URL route (isAdminRoute ? 'ADMIN' : 'GVCN')
+  const activeTab: 'GVCN' | 'ADMIN' = isAdminRoute ? 'ADMIN' : 'GVCN';
 
   // GVCN Selection State
   const [selectedClassId, setSelectedClassId] = useState<string>('');
@@ -92,17 +92,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
   // Initialize selected class & teacher on mount
   useEffect(() => {
-    if (isAdminRoute) {
-      setActiveTab('ADMIN');
-      return;
-    }
+    if (isAdminRoute) return;
     const savedClassId = localStorage.getItem('sso_saved_class_id');
     const savedTeacherId = localStorage.getItem('sso_saved_teacher_id');
-    const savedTab = localStorage.getItem('sso_saved_active_tab') as 'GVCN' | 'ADMIN';
 
-    if (savedTab) {
-      setActiveTab(savedTab);
-    }
     if (savedClassId) {
       setSelectedClassId(savedClassId);
     }
@@ -124,11 +117,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       localStorage.setItem('sso_saved_teacher_id', selectedTeacherId);
     }
   }, [selectedTeacherId]);
-
-  // Save active tab
-  useEffect(() => {
-    localStorage.setItem('sso_saved_active_tab', activeTab);
-  }, [activeTab]);
 
   // Sync teacher when selectedClassId changes
   useEffect(() => {
@@ -425,11 +413,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         </div>
       </div>
 
-      {/* School Year Info Bar - Configuration restricted to ADMIN only */}
+      {/* School Year Info Bar */}
       <div className="mt-3 sm:mx-auto sm:w-full sm:max-w-lg">
-        <div className="bg-white/90 backdrop-blur-xs border border-blue-200/80 rounded-xl px-3 py-1.5 shadow-xs flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="w-6 h-6 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center flex-shrink-0">
+        <div className={`bg-white/90 backdrop-blur-xs border rounded-xl px-3.5 py-2 shadow-xs flex items-center justify-between gap-2 ${
+          isAdminRoute ? 'border-purple-200/80' : 'border-blue-200/80'
+        }`}>
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className={`w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 ${
+              isAdminRoute ? 'bg-purple-50 text-purple-700' : 'bg-blue-50 text-blue-700'
+            }`}>
               <Calendar className="w-4 h-4" />
             </div>
             <div className="min-w-0">
@@ -437,7 +429,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 Năm học hoạt động
               </div>
               <div className="flex items-center gap-2 mt-0.5">
-                <span className="text-xs font-black text-blue-950">
+                <span className={`text-xs font-black ${isAdminRoute ? 'text-purple-950' : 'text-blue-950'}`}>
                   Năm học {activeYear?.name || '2026-2027'}
                 </span>
                 <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">
@@ -447,7 +439,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             </div>
           </div>
 
-          {activeTab === 'ADMIN' ? (
+          {isAdminRoute && (
             <button
               type="button"
               onClick={handleOpenAdminYearModal}
@@ -457,88 +449,151 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               <Settings2 className="w-3.5 h-3.5" />
               <span>Cấu hình năm học</span>
             </button>
-          ) : (
-            <div className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 bg-slate-50 border border-slate-200/80 px-2.5 py-1 rounded-lg">
-              <ShieldCheck className="w-3.5 h-3.5 text-slate-400" />
-              <span>Quản trị cấu hình</span>
-            </div>
           )}
         </div>
       </div>
 
       {/* Main Login Card */}
       <div className="mt-4 sm:mx-auto sm:w-full sm:max-w-lg">
-        {isAdminRoute && (
-          <div className="mb-2.5 p-3 rounded-2xl bg-purple-900 text-white shadow-md border border-purple-800 flex items-center justify-between gap-2 animate-in fade-in">
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="w-8 h-8 rounded-xl bg-purple-800 text-purple-200 flex items-center justify-center flex-shrink-0">
-                <ShieldCheck className="w-4 h-4" />
+        {isAdminRoute ? (
+          /* DÀNH RIÊNG CHO URL /admin */
+          <div className="bg-white shadow-xl rounded-2xl border border-purple-200 overflow-hidden">
+            {/* Header on card for Admin */}
+            <div className="bg-gradient-to-r from-slate-900 via-purple-950 to-indigo-950 text-white p-5 text-center relative overflow-hidden">
+              <div className="w-12 h-12 rounded-2xl bg-white/10 text-purple-200 border border-white/20 flex items-center justify-center mx-auto mb-2 shadow-inner">
+                <ShieldCheck className="w-6 h-6 text-purple-300" />
               </div>
-              <div className="min-w-0">
-                <div className="text-[10px] font-black uppercase tracking-wider text-purple-300 leading-none">
-                  CỔNG QUẢN TRỊ TRANG WEB
-                </div>
-                <div className="text-xs font-bold text-white truncate mt-0.5">
-                  Đang truy cập qua đường dẫn <code className="bg-purple-800 px-1.5 py-0.5 rounded text-purple-100 font-mono font-bold">/admin</code>
-                </div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-white/10 text-purple-200 border border-white/20 mb-1.5">
+                <span>URL: /admin</span>
               </div>
+              <h2 className="text-base sm:text-lg font-black tracking-tight text-white uppercase">
+                ĐĂNG NHẬP BAN GIÁM HIỆU & QUẢN TRỊ VIÊN
+              </h2>
+              <p className="text-xs text-purple-200/80 mt-1 max-w-sm mx-auto">
+                Cổng quản trị dành cho BGH và Quản trị viên trường học
+              </p>
             </div>
-            {onNavigateToPublic && (
-              <button
-                type="button"
-                onClick={onNavigateToPublic}
-                className="text-[11px] font-bold text-purple-200 hover:text-white bg-purple-800/80 hover:bg-purple-800 px-2.5 py-1.5 rounded-lg transition-colors flex-shrink-0"
-              >
-                ← Cổng Giáo viên
-              </button>
-            )}
-          </div>
-        )}
-        <div className="bg-white shadow-xl rounded-2xl border border-slate-200 overflow-hidden">
-          {/* Tab Switcher */}
-          <div className="grid grid-cols-2 border-b border-slate-200 bg-slate-50/80 p-1.5 gap-1.5">
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('GVCN');
-                setError('');
-              }}
-              className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition-all ${
-                activeTab === 'GVCN'
-                  ? 'bg-white text-blue-700 shadow-sm border border-slate-200/80'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-              }`}
-            >
-              <GraduationCap className="w-3.5 h-3.5 text-blue-600" />
-              <span>GIÁO VIÊN CHỦ NHIỆM</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('ADMIN');
-                setError('');
-              }}
-              className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition-all ${
-                activeTab === 'ADMIN'
-                  ? 'bg-white text-purple-700 shadow-sm border border-slate-200/80'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-              }`}
-            >
-              <ShieldCheck className="w-3.5 h-3.5 text-purple-600" />
-              <span>BGH & QUẢN TRỊ</span>
-            </button>
-          </div>
 
-          <div className="p-4 sm:p-5">
-            {error && (
-              <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded-lg text-[11px] font-semibold text-red-700 flex items-center gap-1.5">
-                <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-                <span>{error}</span>
+            <div className="p-4 sm:p-5">
+              {error && (
+                <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded-lg text-[11px] font-semibold text-red-700 flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span>{error}</span>
+                </div>
+              )}
+
+              <form className="space-y-4" onSubmit={handleAdminSubmit}>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+                    Email hoặc Tên đăng nhập <span className="text-red-500">*</span>
+                  </label>
+                  <div className="mt-1">
+                    <input
+                      type="text"
+                      required
+                      placeholder="Nhập email hoặc tên đăng nhập..."
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-colors shadow-2xs"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+                    Mật khẩu Quản trị <span className="text-red-500">*</span>
+                  </label>
+                  <div className="mt-1 relative">
+                    <input
+                      type="password"
+                      required
+                      placeholder="Nhập mật khẩu..."
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-colors shadow-2xs"
+                    />
+                    <KeyRound className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-2.5" />
+                  </div>
+                </div>
+
+                <div className="pt-1">
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="w-full flex justify-center items-center gap-2 py-3 px-4 rounded-xl shadow-md text-sm font-bold text-white bg-purple-600 hover:bg-purple-700 active:scale-[0.99] focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 transition-all disabled:opacity-50"
+                  >
+                    <LogIn className="w-4 h-4" />
+                    <span>{isSubmitting ? 'Đang xác thực...' : 'ĐĂNG NHẬP QUẢN TRỊ'}</span>
+                  </button>
+                </div>
+              </form>
+
+              {/* Quick Testing 1-Click for Admin/BGH if available */}
+              {allUsers.filter(u => u.role === 'ADMIN' || u.role === 'BGH').length > 0 && (
+                <div className="mt-4 pt-3 border-t border-slate-100">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 text-center">
+                    Đăng nhập nhanh (Tài khoản Quản trị / BGH)
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {allUsers.filter(u => u.role === 'ADMIN' || u.role === 'BGH').slice(0, 4).map(u => (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => handleQuickLogin(u.id, '/admin')}
+                        className="p-2 rounded-lg border border-purple-100 bg-purple-50/50 hover:bg-purple-100/80 text-left transition-colors flex items-center gap-2"
+                      >
+                        <div className="w-6 h-6 rounded-md bg-purple-600 text-white flex items-center justify-center text-[10px] font-bold">
+                          {u.role === 'ADMIN' ? 'AD' : 'BGH'}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-bold text-purple-950 truncate">{u.full_name}</div>
+                          <div className="text-[9px] text-purple-600 font-medium truncate">{u.email}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Back link to teacher view */}
+              {onNavigateToPublic && (
+                <div className="mt-4 pt-3 border-t border-slate-100 text-center">
+                  <button
+                    type="button"
+                    onClick={onNavigateToPublic}
+                    className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-blue-700 font-semibold transition-colors"
+                  >
+                    <ArrowRight className="w-3.5 h-3.5 rotate-180" />
+                    <span>Quay lại Cổng Giáo viên (Báo cáo sĩ số)</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          /* DÀNH CHO CỬA SỔ ĐĂNG NHẬP CHÍNH (GIÁO VIÊN CHỦ NHIỆM) - KHÔNG CÓ TAB HOẶC NÚT QUẢN TRỊ */
+          <div className="bg-white shadow-xl rounded-2xl border border-slate-200 overflow-hidden">
+            {/* Header on card for GVCN */}
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50/60 border-b border-slate-200 px-4 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <GraduationCap className="w-4 h-4 text-blue-700" />
+                <span className="text-xs font-black text-blue-900 uppercase tracking-tight">
+                  CỔNG BÁO CÁO SĨ SỐ - GIÁO VIÊN CHỦ NHIỆM
+                </span>
               </div>
-            )}
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200">
+                Điểm danh nhanh
+              </span>
+            </div>
 
-            {/* TAB 1: GVCN - CHỈ CẦN THÔNG TIN LỚP & TÊN GVCN */}
-            {activeTab === 'GVCN' && (
+            <div className="p-4 sm:p-5">
+              {error && (
+                <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded-lg text-[11px] font-semibold text-red-700 flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span>{error}</span>
+                </div>
+              )}
+
               <div className="space-y-4">
                 <div className="bg-blue-50/70 border border-blue-100 rounded-lg p-2 text-[11px] text-blue-800 flex items-start gap-1.5 leading-tight">
                   <Sparkles className="w-3.5 h-3.5 text-blue-600 flex-shrink-0 mt-0.5" />
@@ -657,77 +712,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   </p>
                 </div>
               </div>
-            )}
-
-            {/* TAB 2: BAN GIÁM HIỆU & QUẢN TRỊ VIÊN */}
-            {activeTab === 'ADMIN' && (
-              <form className="space-y-4" onSubmit={handleAdminSubmit}>
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider">
-                    Email hoặc Tên đăng nhập
-                  </label>
-                  <div className="mt-1">
-                    <input
-                      type="text"
-                      required
-                      placeholder="Nhập email hoặc tên đăng nhập..."
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-colors shadow-2xs"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider">
-                    Mật khẩu
-                  </label>
-                  <div className="mt-1 relative">
-                    <input
-                      type="password"
-                      required
-                      placeholder="Nhập mật khẩu..."
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-colors shadow-2xs"
-                    />
-                    <KeyRound className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-2.5" />
-                  </div>
-                </div>
-
-                <div className="pt-1">
-                  <button
-                    type="submit"
-                    disabled={isSubmitting}
-                    className="w-full flex justify-center items-center gap-2 py-3 px-4 rounded-xl shadow-md text-sm font-bold text-white bg-purple-600 hover:bg-purple-700 active:scale-[0.99] focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 transition-all disabled:opacity-50"
-                  >
-                    <LogIn className="w-4 h-4" />
-                    <span>{isSubmitting ? 'Đang xác thực...' : 'ĐĂNG NHẬP QUẢN TRỊ'}</span>
-                  </button>
-                </div>
-              </form>
-            )}
-            {/* Quick Link to /admin if not on admin route */}
-            {!isAdminRoute && (
-              <div className="mt-4 pt-3 border-t border-slate-100 text-center">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (onNavigateToAdmin) {
-                      onNavigateToAdmin();
-                    } else {
-                      setActiveTab('ADMIN');
-                    }
-                  }}
-                  className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-purple-700 font-semibold transition-colors"
-                >
-                  <KeyRound className="w-3.5 h-3.5 text-purple-600" />
-                  <span>Quản trị viên & BGH? Truy cập <strong className="font-mono text-purple-700 font-bold bg-purple-50 border border-purple-200/60 px-1.5 py-0.5 rounded">/admin</strong></span>
-                </button>
-              </div>
-            )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* MODAL CẤU HÌNH NĂM HỌC - CHỈ QUẢN TRỊ VIÊN CÓ QUYỀN */}
