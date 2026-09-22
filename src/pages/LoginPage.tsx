@@ -20,7 +20,10 @@ import {
   AlertCircle,
   Lock,
   Unlock,
-  Trash2
+  Trash2,
+  MapPin,
+  Users,
+  Search,
 } from 'lucide-react';
 import { SchoolYear, Profile } from '../types';
 import { PWAInstallButton } from '../components/PWAInstallButton';
@@ -61,6 +64,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   // GVCN Selection State
   const [selectedClassId, setSelectedClassId] = useState<string>('');
   const [selectedTeacherId, setSelectedTeacherId] = useState<string>('');
+  const [selectedCampusTabId, setSelectedCampusTabId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('sso_saved_campus_tab_id') || '';
+    }
+    return '';
+  });
+  const [teacherSearchTerm, setTeacherSearchTerm] = useState('');
 
   // Admin / BGH Login State
   const [email, setEmail] = useState('');
@@ -95,12 +105,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     if (isAdminRoute) return;
     const savedClassId = localStorage.getItem('sso_saved_class_id');
     const savedTeacherId = localStorage.getItem('sso_saved_teacher_id');
+    const savedCampusId = localStorage.getItem('sso_saved_campus_tab_id');
 
     if (savedClassId) {
       setSelectedClassId(savedClassId);
     }
     if (savedTeacherId) {
       setSelectedTeacherId(savedTeacherId);
+    }
+    if (savedCampusId) {
+      setSelectedCampusTabId(savedCampusId);
     }
   }, [isAdminRoute]);
 
@@ -328,14 +342,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     }
   };
 
-  // Group classes by preschool grades
-  const classesByPreschoolGrade = useMemo(() => {
-    return preschoolGrades.map((pg) => ({
-      gradeConfig: pg,
-      classes: classes.filter((c) => c.grade === pg.grade_num),
-    }));
-  }, [preschoolGrades, classes]);
-
   // Danh sách GVCN đã được lọc trùng tên tuyệt đối (mỗi giáo viên chỉ xuất hiện đúng 1 lần)
   const gvcnUsers = useMemo(() => {
     const rawGvcn = allUsers.filter((u) => u.role === 'GVCN');
@@ -365,6 +371,179 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     }
     return result;
   }, [allUsers, classes]);
+
+  // Danh sách các phân hiệu đang hoạt động
+  const activeCampuses = useMemo(() => {
+    return campuses.filter((c) => c.active !== false);
+  }, [campuses]);
+
+  // ID phân hiệu chính/mặc định đầu tiên
+  const primaryCampusId = useMemo(() => {
+    return activeCampuses[0]?.id || 'c_1';
+  }, [activeCampuses]);
+
+  // Danh sách thẻ phân hiệu (Campus Tabs)
+  const campusTabs = useMemo(() => {
+    if (activeCampuses.length === 0) {
+      return [
+        {
+          id: 'ALL',
+          name: 'Toàn trường',
+          classCount: classes.length,
+          teacherCount: gvcnUsers.length,
+        },
+      ];
+    }
+
+    const tabs = activeCampuses.map((camp) => {
+      const campClasses = classes.filter((c) => (c.campus_id || primaryCampusId) === camp.id);
+      const campClassIds = new Set(campClasses.map((c) => c.id));
+      const campTeacherIds = new Set(campClasses.map((c) => c.homeroom_teacher_id).filter(Boolean));
+
+      const campTeachers = gvcnUsers.filter((u) => {
+        if (campTeacherIds.has(u.id)) return true;
+        if (u.assigned_class_id && campClassIds.has(u.assigned_class_id)) return true;
+        return false;
+      });
+
+      return {
+        id: camp.id,
+        name: camp.name,
+        classCount: campClasses.length,
+        teacherCount: campTeachers.length,
+      };
+    });
+
+    // Thêm thẻ "Toàn trường" nếu trường có nhiều hơn 1 phân hiệu
+    if (tabs.length > 1) {
+      tabs.push({
+        id: 'ALL',
+        name: 'Toàn trường',
+        classCount: classes.length,
+        teacherCount: gvcnUsers.length,
+      });
+    }
+
+    return tabs;
+  }, [activeCampuses, primaryCampusId, classes, gvcnUsers]);
+
+  // ID phân hiệu đang được kích hoạt thực tế
+  const activeCampusTabId = useMemo(() => {
+    if (selectedCampusTabId && (selectedCampusTabId === 'ALL' || campusTabs.some((t) => t.id === selectedCampusTabId))) {
+      return selectedCampusTabId;
+    }
+    // Nếu có lớp đã chọn, ưu tiên phân hiệu của lớp đó
+    if (selectedClassId) {
+      const cls = classes.find((c) => c.id === selectedClassId);
+      const clsCampus = cls?.campus_id || primaryCampusId;
+      if (campusTabs.some((t) => t.id === clsCampus)) {
+        return clsCampus;
+      }
+    }
+    return campusTabs[0]?.id || 'ALL';
+  }, [selectedCampusTabId, campusTabs, selectedClassId, classes, primaryCampusId]);
+
+  // Danh sách lớp học thuộc phân hiệu đã chọn
+  const filteredCampusClasses = useMemo(() => {
+    if (activeCampusTabId === 'ALL') {
+      return classes;
+    }
+    return classes.filter((c) => (c.campus_id || primaryCampusId) === activeCampusTabId);
+  }, [classes, primaryCampusId, activeCampusTabId]);
+
+  // Nhóm lớp học theo khối mầm non (dành cho dropdown chọn lớp)
+  const classesByPreschoolGrade = useMemo(() => {
+    return preschoolGrades.map((pg) => ({
+      gradeConfig: pg,
+      classes: filteredCampusClasses.filter((c) => c.grade === pg.grade_num),
+    }));
+  }, [preschoolGrades, filteredCampusClasses]);
+
+  // Danh sách GVCN thuộc phân hiệu đã chọn (giúp GVCN tìm tên cực nhanh)
+  const campusGvcnUsers = useMemo(() => {
+    if (activeCampusTabId === 'ALL') {
+      return gvcnUsers;
+    }
+    const campClassIds = new Set(filteredCampusClasses.map((c) => c.id));
+    const campTeacherIds = new Set(filteredCampusClasses.map((c) => c.homeroom_teacher_id).filter(Boolean));
+
+    return gvcnUsers.filter((u) => {
+      if (campTeacherIds.has(u.id)) return true;
+      if (u.assigned_class_id && campClassIds.has(u.assigned_class_id)) return true;
+      return false;
+    });
+  }, [gvcnUsers, filteredCampusClasses, activeCampusTabId]);
+
+  // Kết quả tìm kiếm nhanh tên giáo viên trên toàn trường
+  const teacherSearchResults = useMemo(() => {
+    const q = removeVietnameseTones(teacherSearchTerm.trim().toLowerCase());
+    if (!q) return [];
+    return gvcnUsers.filter((u) => {
+      const name = removeVietnameseTones(u.full_name.toLowerCase());
+      const cls = classes.find(
+        (c) => c.id === u.assigned_class_id || c.homeroom_teacher_id === u.id
+      );
+      const clsName = cls ? removeVietnameseTones(cls.class_name.toLowerCase()) : '';
+      return name.includes(q) || clsName.includes(q);
+    }).slice(0, 8);
+  }, [teacherSearchTerm, gvcnUsers, classes]);
+
+  // Xử lý khi nhấn chọn thẻ phân hiệu
+  const handleSelectCampusTab = (campusId: string) => {
+    setSelectedCampusTabId(campusId);
+    try {
+      localStorage.setItem('sso_saved_campus_tab_id', campusId);
+    } catch {}
+
+    const targetClasses = campusId === 'ALL'
+      ? classes
+      : classes.filter((c) => (c.campus_id || primaryCampusId) === campusId);
+
+    if (targetClasses.length > 0) {
+      const isClassInCampus = targetClasses.some((c) => c.id === selectedClassId);
+      if (!isClassInCampus) {
+        // Tự động chuyển sang lớp đầu tiên của phân hiệu này
+        const firstCls = targetClasses[0];
+        setSelectedClassId(firstCls.id);
+
+        const assignedTeacher = allUsers.find(
+          (u) =>
+            u.role === 'GVCN' &&
+            (u.id === firstCls.homeroom_teacher_id || u.assigned_class_id === firstCls.id)
+        );
+        if (assignedTeacher) {
+          setSelectedTeacherId(assignedTeacher.id);
+        } else {
+          const campTeacher = gvcnUsers.find((u) =>
+            targetClasses.some((c) => c.homeroom_teacher_id === u.id || c.id === u.assigned_class_id)
+          );
+          if (campTeacher) {
+            setSelectedTeacherId(campTeacher.id);
+          }
+        }
+      }
+    }
+  };
+
+  // Xử lý khi chọn giáo viên trực tiếp (từ card hoặc search)
+  const handleSelectTeacher = (teacherId: string) => {
+    setSelectedTeacherId(teacherId);
+    const matchedClass = classes.find(
+      (c) =>
+        c.homeroom_teacher_id === teacherId ||
+        c.id === allUsers.find((u) => u.id === teacherId)?.assigned_class_id
+    );
+    if (matchedClass) {
+      setSelectedClassId(matchedClass.id);
+      const clsCampus = matchedClass.campus_id || primaryCampusId;
+      if (clsCampus && activeCampusTabId !== 'ALL' && activeCampusTabId !== clsCampus) {
+        setSelectedCampusTabId(clsCampus);
+        try {
+          localStorage.setItem('sso_saved_campus_tab_id', clsCampus);
+        } catch {}
+      }
+    }
+  };
 
   return (
     <div className="min-h-screen bg-linear-to-b from-slate-100 via-slate-50 to-slate-200 flex flex-col justify-center py-4 px-4 sm:px-6 lg:px-8">
@@ -595,21 +774,218 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               )}
 
               <div className="space-y-4">
-                <div className="bg-blue-50/70 border border-blue-100 rounded-lg p-2 text-[11px] text-blue-800 flex items-start gap-1.5 leading-tight">
-                  <Sparkles className="w-3.5 h-3.5 text-blue-600 flex-shrink-0 mt-0.5" />
+                <div className="bg-blue-50/70 border border-blue-100 rounded-lg p-2.5 text-[11px] text-blue-900 flex items-start gap-2 leading-relaxed">
+                  <Sparkles className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
                   <div>
-                    <span className="font-bold">Đăng nhập nhanh dành cho GVCN:</span> Chọn lớp và tên của bạn để báo cáo sĩ số, không cần mật khẩu.
+                    <span className="font-bold">Đăng nhập nhanh cho GVCN:</span> Chọn <strong>thẻ Phân hiệu</strong> của bạn bên dưới, sau đó chạm vào tên mình hoặc lớp để vào báo cáo sĩ số ngay.
                   </div>
                 </div>
 
-                {/* 1. Chọn Lớp học */}
+                {/* TÌM KIẾM NHANH TÊN GIÁO VIÊN / LỚP HỌC */}
+                <div className="relative">
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Tìm nhanh theo tên Giáo viên hoặc Tên lớp..."
+                      value={teacherSearchTerm}
+                      onChange={(e) => setTeacherSearchTerm(e.target.value)}
+                      className="w-full pl-8 pr-7 py-2 rounded-xl border border-slate-300 text-xs text-slate-800 placeholder:text-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-slate-50/60 shadow-2xs"
+                    />
+                    <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-2.5" />
+                    {teacherSearchTerm && (
+                      <button
+                        type="button"
+                        onClick={() => setTeacherSearchTerm('')}
+                        className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                        title="Xóa tìm kiếm"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* KẾT QUẢ TÌM KIẾM NHANH */}
+                  {teacherSearchTerm.trim() && (
+                    <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-30 p-1.5 max-h-56 overflow-y-auto">
+                      {teacherSearchResults.length === 0 ? (
+                        <div className="p-3 text-center text-xs text-slate-500">
+                          Không tìm thấy giáo viên hoặc lớp phù hợp với "{teacherSearchTerm}"
+                        </div>
+                      ) : (
+                        <div className="space-y-1">
+                          <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                            Kết quả tìm kiếm ({teacherSearchResults.length})
+                          </div>
+                          {teacherSearchResults.map((teacher) => {
+                            const teacherClass = classes.find(
+                              (c) => c.id === teacher.assigned_class_id || c.homeroom_teacher_id === teacher.id
+                            );
+                            const campName = teacherClass ? getCampusName(teacherClass.campus_id) : 'Chưa gắn lớp';
+                            return (
+                              <button
+                                key={teacher.id}
+                                type="button"
+                                onClick={() => {
+                                  handleSelectTeacher(teacher.id);
+                                  setTeacherSearchTerm('');
+                                }}
+                                className="w-full text-left p-2 rounded-lg hover:bg-blue-50 flex items-center justify-between gap-2 transition-colors cursor-pointer"
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <div className="w-6 h-6 rounded-md bg-blue-100 text-blue-700 font-bold text-xs flex items-center justify-center flex-shrink-0">
+                                    {teacher.full_name.trim().charAt(0)}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="text-xs font-bold text-slate-900 truncate">
+                                      {teacher.full_name}
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 truncate">
+                                      {teacherClass ? `Lớp ${teacherClass.class_name}` : 'Chưa phân lớp'} • {campName}
+                                    </div>
+                                  </div>
+                                </div>
+                                <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-200 flex-shrink-0">
+                                  Chọn
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* 1. THẺ CÁC PHÂN HIỆU / ĐIỂM TRƯỜNG */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-[11px] font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                      <MapPin className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Thẻ phân hiệu / Điểm trường <span className="text-red-500">*</span></span>
+                    </label>
+                    <span className="text-[10px] text-blue-700 font-semibold bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">
+                      {campusTabs.find((t) => t.id === activeCampusTabId)?.name || 'Phân hiệu'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 -mx-1 px-1">
+                    {campusTabs.map((tab) => {
+                      const isActive = activeCampusTabId === tab.id;
+                      return (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => handleSelectCampusTab(tab.id)}
+                          className={`group flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap flex-shrink-0 cursor-pointer ${
+                            isActive
+                              ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20 ring-2 ring-blue-400'
+                              : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
+                          }`}
+                        >
+                          {tab.id === 'ALL' ? (
+                            <School className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-slate-500'}`} />
+                          ) : (
+                            <MapPin className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-blue-600'}`} />
+                          )}
+                          <span>{tab.name}</span>
+                          <span
+                            className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded-full ${
+                              isActive ? 'bg-white/25 text-white' : 'bg-slate-200 text-slate-600'
+                            }`}
+                          >
+                            {tab.teacherCount} GV
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 2. BẢNG CHỌN NHANH GIÁO VIÊN TRONG PHÂN HIỆU */}
+                {campusGvcnUsers.length > 0 ? (
+                  <div className="bg-slate-50/80 border border-slate-200 rounded-xl p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                        <Users className="w-3.5 h-3.5 text-blue-600" />
+                        <span>Giáo viên {campusTabs.find((t) => t.id === activeCampusTabId)?.name || 'phân hiệu'}:</span>
+                      </div>
+                      <span className="text-[10px] font-bold text-blue-700 bg-blue-100/70 px-2 py-0.5 rounded-full">
+                        Chạm để chọn
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-52 overflow-y-auto pr-0.5">
+                      {campusGvcnUsers.map((teacher) => {
+                        const isSelected = selectedTeacherId === teacher.id;
+                        const teacherClass = classes.find(
+                          (c) => c.id === teacher.assigned_class_id || c.homeroom_teacher_id === teacher.id
+                        );
+                        return (
+                          <button
+                            key={teacher.id}
+                            type="button"
+                            onClick={() => handleSelectTeacher(teacher.id)}
+                            className={`p-2 rounded-xl text-left border flex items-center justify-between gap-2 transition-all cursor-pointer ${
+                              isSelected
+                                ? 'bg-blue-600 text-white border-blue-600 shadow-sm ring-2 ring-blue-300'
+                                : 'bg-white hover:bg-blue-50/50 border-slate-200 text-slate-800 hover:border-blue-300'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div
+                                className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-xs flex-shrink-0 ${
+                                  isSelected ? 'bg-white text-blue-700' : 'bg-blue-100 text-blue-800'
+                                }`}
+                              >
+                                {teacher.full_name.trim().charAt(0)}
+                              </div>
+                              <div className="min-w-0">
+                                <div className={`text-xs font-bold truncate ${isSelected ? 'text-white' : 'text-slate-900'}`}>
+                                  {teacher.full_name}
+                                </div>
+                                <div className={`text-[10px] truncate ${isSelected ? 'text-blue-100' : 'text-blue-700 font-semibold'}`}>
+                                  {teacherClass ? `Lớp ${teacherClass.class_name}` : 'Chưa phân lớp'}
+                                </div>
+                              </div>
+                            </div>
+                            {isSelected && (
+                              <div className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0">
+                                <Check className="w-3.5 h-3.5 text-white" />
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-xl text-[11px] text-amber-800">
+                    Phân hiệu này chưa có giáo viên nào được phân công. Bạn có thể chọn lớp bên dưới hoặc chuyển sang thẻ <strong>Toàn trường</strong>.
+                  </div>
+                )}
+
+                {/* 3. DROPDOWN LỚP HỌC (ĐÃ LỌC THEO PHÂN HIỆU) */}
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    1. Chọn Lớp học <span className="text-red-500">*</span>
+                    Lớp học thuộc phân hiệu <span className="text-red-500">*</span>
                   </label>
                   <select
                     value={selectedClassId}
-                    onChange={(e) => setSelectedClassId(e.target.value)}
+                    onChange={(e) => {
+                      const newClsId = e.target.value;
+                      setSelectedClassId(newClsId);
+                      const targetCls = classes.find((c) => c.id === newClsId);
+                      if (targetCls) {
+                        const assignedTeacher = allUsers.find(
+                          (u) =>
+                            u.role === 'GVCN' &&
+                            (u.id === targetCls.homeroom_teacher_id || u.assigned_class_id === targetCls.id)
+                        );
+                        if (assignedTeacher) {
+                          setSelectedTeacherId(assignedTeacher.id);
+                        }
+                      }
+                    }}
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs font-bold text-slate-800 bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors shadow-2xs"
                   >
                     <option value="" disabled>-- Vui lòng chọn lớp học --</option>
@@ -628,30 +1004,21 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   </select>
                 </div>
 
-                {/* 2. Tên Giáo viên chủ nhiệm */}
+                {/* 4. DROPDOWN GIÁO VIÊN CHỦ NHIỆM */}
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider">
-                      2. Tên Giáo viên chủ nhiệm <span className="text-red-500">*</span>
+                      Tên Giáo viên chủ nhiệm <span className="text-red-500">*</span>
                     </label>
-                    <span className="text-[10px] text-blue-600 font-semibold">Tự nhận diện</span>
+                    <span className="text-[10px] text-blue-600 font-semibold">Tự nhận diện theo lớp</span>
                   </div>
                   <select
                     value={selectedTeacherId}
-                    onChange={(e) => {
-                      const newTeacherId = e.target.value;
-                      setSelectedTeacherId(newTeacherId);
-                      const matchedClass = classes.find(
-                        (c) => c.homeroom_teacher_id === newTeacherId || c.id === allUsers.find((u) => u.id === newTeacherId)?.assigned_class_id
-                      );
-                      if (matchedClass) {
-                        setSelectedClassId(matchedClass.id);
-                      }
-                    }}
+                    onChange={(e) => handleSelectTeacher(e.target.value)}
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs font-semibold text-slate-800 bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors shadow-2xs"
                   >
                     <option value="" disabled>-- Vui lòng chọn giáo viên chủ nhiệm --</option>
-                    {gvcnUsers.map((teacher) => {
+                    {(campusGvcnUsers.length > 0 ? campusGvcnUsers : gvcnUsers).map((teacher) => {
                       const teacherClass = classes.find(
                         (c) => c.id === teacher.assigned_class_id || c.homeroom_teacher_id === teacher.id
                       );
@@ -668,25 +1035,32 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                     const teacherAssignedClass = classes.find(
                       (c) => c.id === currentTeacher.assigned_class_id || c.homeroom_teacher_id === currentTeacher.id
                     ) || currentClass;
+                    const campName = teacherAssignedClass ? getCampusName(teacherAssignedClass.campus_id) : '';
                     return (
-                      <div className="mt-2 p-2 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-xs flex-shrink-0 shadow-xs">
+                      <div className="mt-2.5 p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-xs flex-shrink-0 shadow-xs">
                             {currentTeacher.full_name.charAt(0)}
                           </div>
                           <div className="min-w-0">
                             <div className="text-xs font-black text-slate-900 truncate">
                               {currentTeacher.full_name}
                             </div>
-                            <div className="text-[10px] text-blue-700 font-bold flex items-center gap-1 mt-0.5">
+                            <div className="text-[10px] text-blue-700 font-bold flex items-center gap-1.5 mt-0.5">
                               <span>GVCN {teacherAssignedClass ? `Lớp ${teacherAssignedClass.class_name}` : ''}</span>
+                              {campName && (
+                                <>
+                                  <span>•</span>
+                                  <span className="text-slate-600 font-semibold">{campName}</span>
+                                </>
+                              )}
                               <span>•</span>
-                              <span className="text-slate-500 font-medium">Năm học {activeYear?.name || '2026-2027'}</span>
+                              <span className="text-slate-500 font-medium">Năm {activeYear?.name || '2026-2027'}</span>
                             </div>
                           </div>
                         </div>
                         <div className="flex-shrink-0">
-                          <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                          <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
                             <Check className="w-2.5 h-2.5" />
                             Sẵn sàng
                           </span>
