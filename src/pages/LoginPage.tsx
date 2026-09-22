@@ -29,9 +29,17 @@ import { removeVietnameseTones } from '../utils/vietnamese';
 
 interface LoginPageProps {
   onLoginSuccess: (targetPath?: string) => void;
+  isAdminRoute?: boolean;
+  onNavigateToAdmin?: () => void;
+  onNavigateToPublic?: () => void;
 }
 
-export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
+export const LoginPage: React.FC<LoginPageProps> = ({
+  onLoginSuccess,
+  isAdminRoute = false,
+  onNavigateToAdmin,
+  onNavigateToPublic,
+}) => {
   const { currentUser, login, allUsers, switchUser, reloadUsers } = useAuth();
   const {
     settings,
@@ -48,7 +56,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   } = useSchool();
 
   // Mode: GVCN (default) or ADMIN/BGH
-  const [activeTab, setActiveTab] = useState<'GVCN' | 'ADMIN'>('GVCN');
+  const [activeTab, setActiveTab] = useState<'GVCN' | 'ADMIN'>(isAdminRoute ? 'ADMIN' : 'GVCN');
 
   // GVCN Selection State
   const [selectedClassId, setSelectedClassId] = useState<string>('');
@@ -84,6 +92,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
 
   // Initialize selected class & teacher on mount
   useEffect(() => {
+    if (isAdminRoute) {
+      setActiveTab('ADMIN');
+      return;
+    }
     const savedClassId = localStorage.getItem('sso_saved_class_id');
     const savedTeacherId = localStorage.getItem('sso_saved_teacher_id');
     const savedTab = localStorage.getItem('sso_saved_active_tab') as 'GVCN' | 'ADMIN';
@@ -97,7 +109,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     if (savedTeacherId) {
       setSelectedTeacherId(savedTeacherId);
     }
-  }, []);
+  }, [isAdminRoute]);
 
   // Sync and save selection of class
   useEffect(() => {
@@ -211,7 +223,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
       }
       const ok = await login(email);
       if (ok) {
-        onLoginSuccess('/dashboard');
+        onLoginSuccess('/admin');
       } else {
         setError('Email hoặc tài khoản không chính xác. Vui lòng thử lại.');
       }
@@ -225,7 +237,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   // Handle 1-click Quick Login for testing
   const handleQuickLogin = async (userId: string, targetPath: string = '/dashboard') => {
     await switchUser(userId);
-    onLoginSuccess(targetPath);
+    const targetUser = allUsers.find(u => u.id === userId);
+    if (targetUser?.role === 'ADMIN' || targetUser?.role === 'BGH' || isAdminRoute) {
+      onLoginSuccess('/admin');
+    } else {
+      onLoginSuccess(targetPath);
+    }
   };
 
   // Open Admin Year Modal with verification check
@@ -451,6 +468,32 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
 
       {/* Main Login Card */}
       <div className="mt-4 sm:mx-auto sm:w-full sm:max-w-lg">
+        {isAdminRoute && (
+          <div className="mb-2.5 p-3 rounded-2xl bg-purple-900 text-white shadow-md border border-purple-800 flex items-center justify-between gap-2 animate-in fade-in">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-purple-800 text-purple-200 flex items-center justify-center flex-shrink-0">
+                <ShieldCheck className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-[10px] font-black uppercase tracking-wider text-purple-300 leading-none">
+                  CỔNG QUẢN TRỊ TRANG WEB
+                </div>
+                <div className="text-xs font-bold text-white truncate mt-0.5">
+                  Đang truy cập qua đường dẫn <code className="bg-purple-800 px-1.5 py-0.5 rounded text-purple-100 font-mono font-bold">/admin</code>
+                </div>
+              </div>
+            </div>
+            {onNavigateToPublic && (
+              <button
+                type="button"
+                onClick={onNavigateToPublic}
+                className="text-[11px] font-bold text-purple-200 hover:text-white bg-purple-800/80 hover:bg-purple-800 px-2.5 py-1.5 rounded-lg transition-colors flex-shrink-0"
+              >
+                ← Cổng Giáo viên
+              </button>
+            )}
+          </div>
+        )}
         <div className="bg-white shadow-xl rounded-2xl border border-slate-200 overflow-hidden">
           {/* Tab Switcher */}
           <div className="grid grid-cols-2 border-b border-slate-200 bg-slate-50/80 p-1.5 gap-1.5">
@@ -663,6 +706,25 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                   </button>
                 </div>
               </form>
+            )}
+            {/* Quick Link to /admin if not on admin route */}
+            {!isAdminRoute && (
+              <div className="mt-4 pt-3 border-t border-slate-100 text-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onNavigateToAdmin) {
+                      onNavigateToAdmin();
+                    } else {
+                      setActiveTab('ADMIN');
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-purple-700 font-semibold transition-colors"
+                >
+                  <KeyRound className="w-3.5 h-3.5 text-purple-600" />
+                  <span>Quản trị viên & BGH? Truy cập <strong className="font-mono text-purple-700 font-bold bg-purple-50 border border-purple-200/60 px-1.5 py-0.5 rounded">/admin</strong></span>
+                </button>
+              </div>
             )}
           </div>
         </div>

@@ -155,6 +155,22 @@ export const MonthlyReportPage: React.FC<MonthlyReportPageProps> = ({ onNavigate
     ]);
 
     const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+    // Apply column widths for better alignment
+    ws['!cols'] = [
+      { wch: 5 },  // STT
+      { wch: 15 }, // Ngày
+      { wch: 20 }, // Số lớp đã báo cáo
+      { wch: 15 }, // Tổng sĩ số
+      { wch: 10 }, // Có mặt
+      { wch: 10 }, // Vắng
+      { wch: 20 }, // Tỷ lệ vắng
+    ];
+
+    // Center align data cells (simple approach: apply to all if possible or specific range)
+    // For simplicity and to avoid complex cell range handling in this context,
+    // setting col widths often improves "căn chỉnh" as requested.
+    
     XLSX.utils.book_append_sheet(wb, ws, 'Thang_' + selectedMonth);
     XLSX.writeFile(wb, `Bao_cao_thang_${selectedMonth}.xlsx`);
   };

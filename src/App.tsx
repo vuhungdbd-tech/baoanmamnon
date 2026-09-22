@@ -16,6 +16,7 @@ import { SettingsCampusesPage } from './pages/SettingsCampusesPage';
 import { SettingsIndicatorsPage } from './pages/SettingsIndicatorsPage';
 import { SettingsReportTemplatePage } from './pages/SettingsReportTemplatePage';
 import { SettingsSupabasePage } from './pages/SettingsSupabasePage';
+import { AdminPortalPage } from './pages/AdminPortalPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Heart, School, ShieldAlert, Sparkles, BarChart3, ClipboardList, FileSpreadsheet, User, Code2 } from 'lucide-react';
@@ -24,8 +25,18 @@ const AppContent: React.FC = () => {
   const { currentUser, isGVCN, loading } = useAuth();
   const { settings, activeYear, classes } = useSchool();
 
-  // Navigation state
+  // Navigation state initialized from URL
   const [currentPath, setCurrentPath] = useState<string>(() => {
+    try {
+      const pathname = window.location.pathname;
+      if (pathname && pathname !== '/' && pathname !== '/index.html') {
+        return pathname;
+      }
+      const hash = window.location.hash.replace(/^#/, '');
+      if (hash && hash.startsWith('/')) {
+        return hash;
+      }
+    } catch {}
     return '/dashboard';
   });
 
@@ -38,13 +49,48 @@ const AppContent: React.FC = () => {
     }
     setCurrentPath(path);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+    try {
+      if (window.location.pathname !== path) {
+        window.history.pushState(null, '', path);
+      }
+    } catch {
+      try {
+        window.location.hash = `#${path}`;
+      } catch {}
+    }
   };
 
   const handleSelectClassForInput = (classId: string, date: string) => {
     setSelectedClassForInput({ classId, date });
-    setCurrentPath('/attendance');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    handleNavigate('/attendance');
   };
+
+  // Listen for browser back/forward and URL changes
+  useEffect(() => {
+    const handleUrlChange = () => {
+      try {
+        let path = window.location.pathname;
+        if (!path || path === '/' || path === '/index.html') {
+          const hash = window.location.hash.replace(/^#/, '');
+          if (hash && hash.startsWith('/')) {
+            path = hash;
+          }
+        }
+        if (path && path !== '/') {
+          setCurrentPath(path);
+        }
+      } catch (err) {
+        console.error('URL change error:', err);
+      }
+    };
+
+    window.addEventListener('popstate', handleUrlChange);
+    window.addEventListener('hashchange', handleUrlChange);
+    return () => {
+      window.removeEventListener('popstate', handleUrlChange);
+      window.removeEventListener('hashchange', handleUrlChange);
+    };
+  }, []);
 
   // Find user's assigned class name if GVCN
   const assignedClass = classes.find((c) => c.id === currentUser?.assigned_class_id);
@@ -52,7 +98,7 @@ const AppContent: React.FC = () => {
   // Default routing for GVCN on app load or navigation
   useEffect(() => {
     if (!loading && currentUser?.role === 'GVCN' && currentPath === '/dashboard') {
-      setCurrentPath('/attendance');
+      handleNavigate('/attendance');
     }
   }, [loading, currentUser, currentPath]);
 
@@ -67,16 +113,24 @@ const AppContent: React.FC = () => {
 
   // If not logged in, show LoginPage
   if (!currentUser) {
+    const isAdminRoute =
+      currentPath === '/admin' ||
+      currentPath.startsWith('/admin') ||
+      (typeof window !== 'undefined' && window.location.pathname === '/admin');
+
     return (
       <LoginPage
+        isAdminRoute={isAdminRoute}
+        onNavigateToAdmin={() => handleNavigate('/admin')}
+        onNavigateToPublic={() => handleNavigate('/dashboard')}
         onLoginSuccess={(targetPath?: string) => {
           if (targetPath === '/attendance') {
             setSelectedClassForInput({});
           }
           if (targetPath) {
-            setCurrentPath(targetPath);
+            handleNavigate(targetPath);
           } else {
-            setCurrentPath('/dashboard');
+            handleNavigate(isAdminRoute ? '/admin' : '/dashboard');
           }
         }}
       />
@@ -121,21 +175,25 @@ const AppContent: React.FC = () => {
             <AttendanceRankingPage onNavigate={handleNavigate} />
           )}
 
+          {(currentPath === '/admin' || currentPath === '/admin/portal') && (
+            <AdminPortalPage onNavigate={handleNavigate} />
+          )}
+
           {currentPath === '/charts' && <ChartsPage />}
 
-          {currentPath === '/classes' && <ClassesManagementPage />}
+          {(currentPath === '/classes' || currentPath === '/admin/classes') && <ClassesManagementPage />}
 
-          {currentPath === '/users' && <UsersManagementPage />}
+          {(currentPath === '/users' || currentPath === '/admin/users') && <UsersManagementPage />}
 
-          {currentPath === '/settings/school' && <SettingsSchoolPage />}
+          {(currentPath === '/settings/school' || currentPath === '/admin/settings/school') && <SettingsSchoolPage />}
 
-          {currentPath === '/settings/campuses' && <SettingsCampusesPage />}
+          {(currentPath === '/settings/campuses' || currentPath === '/admin/settings/campuses') && <SettingsCampusesPage />}
 
-          {currentPath === '/settings/indicators' && <SettingsIndicatorsPage />}
+          {(currentPath === '/settings/indicators' || currentPath === '/admin/settings/indicators') && <SettingsIndicatorsPage />}
 
-          {currentPath === '/settings/report-template' && <SettingsReportTemplatePage />}
+          {(currentPath === '/settings/report-template' || currentPath === '/admin/settings/report-template') && <SettingsReportTemplatePage />}
 
-          {currentPath === '/settings/supabase' && <SettingsSupabasePage />}
+          {(currentPath === '/settings/supabase' || currentPath === '/admin/settings/supabase') && <SettingsSupabasePage />}
 
           {currentPath === '/profile' && <ProfilePage onNavigate={handleNavigate} />}
         </ErrorBoundary>
